@@ -280,11 +280,25 @@ export function AdminPaymentsView({ db, onReviewPayment }: AdminPaymentsViewProp
                   <dd className="mt-0.5 font-semibold text-ink">{activeSelected.method}</dd>
                 </div>
                 <div className="rounded-xl bg-sand px-3.5 py-2.5">
-                  <dt className="text-xs font-semibold text-stone uppercase">Referencia</dt>
-                  <dd className="mt-0.5 font-mono font-semibold text-ink">
-                    {activeSelected.reference}
+                  <dt className="text-xs font-semibold text-stone uppercase">Comprobante de pago</dt>
+                  <dd className="mt-0.5 truncate font-mono font-semibold text-ink">
+                    {activeSelected.receiptFileName || activeSelected.reference}
                   </dd>
                 </div>
+                {activeSelected.receiptImageUrl && (
+                  <div className="rounded-xl border border-line bg-sand p-3 sm:col-span-2">
+                    <dt className="mb-2 text-xs font-semibold text-stone uppercase">
+                      Imagen del comprobante
+                    </dt>
+                    <dd>
+                      <img
+                        src={activeSelected.receiptImageUrl}
+                        alt={`Comprobante de pago ${activeSelected.folio}`}
+                        className="max-h-64 w-full rounded-lg border border-line bg-white object-contain"
+                      />
+                    </dd>
+                  </div>
+                )}
                 {activeSelected.notes && (
                   <div className="rounded-xl bg-sand px-3.5 py-2.5 sm:col-span-2">
                     <dt className="text-xs font-semibold text-stone uppercase">Nota del vecino</dt>

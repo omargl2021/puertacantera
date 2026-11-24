@@ -4,9 +4,16 @@ import { buildQrMatrix } from '../utils/portalLogic';
 interface QrCodeSvgProps {
   code: string;
   size?: number;
+  fillContainer?: boolean;
+  className?: string;
 }
 
-export function QrCodeSvg({ code, size = 148 }: QrCodeSvgProps) {
+export function QrCodeSvg({
+  code,
+  size = 148,
+  fillContainer = false,
+  className,
+}: QrCodeSvgProps) {
   const matrix = useMemo(() => buildQrMatrix(code), [code]);
   const cells = matrix.length;
   const padding = 2;
@@ -14,12 +21,18 @@ export function QrCodeSvg({ code, size = 148 }: QrCodeSvgProps) {
 
   return (
     <svg
-      width={size}
-      height={size}
+      width={fillContainer ? '100%' : size}
+      height={fillContainer ? '100%' : size}
       viewBox={`0 0 ${viewSize} ${viewSize}`}
+      shapeRendering="crispEdges"
       role="img"
-      aria-label={`Código QR del pase ${code}`}
-      className="rounded-xl bg-white p-1 border border-hairline shrink-0"
+      aria-label={`Código QR ${code}`}
+      className={
+        className ??
+        (fillContainer
+          ? 'block h-full w-full bg-white'
+          : 'shrink-0 rounded-xl border border-line bg-white p-1')
+      }
     >
       <rect x="0" y="0" width={viewSize} height={viewSize} fill="#FFFFFF" />
       {matrix.map((row, r) =>
@@ -31,11 +44,10 @@ export function QrCodeSvg({ code, size = 148 }: QrCodeSvgProps) {
               y={r + padding}
               width="1"
               height="1"
-              rx="0.12"
-              fill="#231F1C"
+              fill="#171411"
             />
-          ) : null
-        )
+          ) : null,
+        ),
       )}
     </svg>
   );

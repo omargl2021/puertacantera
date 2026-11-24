@@ -8,19 +8,27 @@ import type {
   PortalDatabase,
   PortalUser,
   ReportStatus,
+  ScannedResidentData,
   UserRole,
+  VehicleDetailsInput,
 } from '../types/portal';
 import {
+  buildVehicleScanUrl,
+  createScannedResidentData,
   DEFAULT_TODAY_ISO,
   formatAuditTimestamp,
   formatHouseLabel,
   formatShortDateEs,
+  formatVehicleSummary,
+  getRoleUsage,
   NOTICE_CATEGORY_LABELS,
   REPORT_STATUS_LABELS,
   ROLE_LABELS,
+  ROLE_LIMITS,
   type AddHouseInput,
   type InviteUserInput,
   type PublishNoticeInput,
+  type UpdateUserPatch,
 } from '../utils/portalLogic';
 
 /* ==================== 4. AVISOS ==================== */
@@ -134,7 +142,7 @@ export function AdminNoticesView({
                   type="checkbox"
                   checked={pinned}
                   onChange={(e) => setPinned(e.target.checked)}
-                  className="size-4 accent-[#7A4A2E]"
+                  className="size-4 accent-[#8A641B]"
                 />
                 Fijar arriba
               </label>
@@ -143,7 +151,7 @@ export function AdminNoticesView({
                   type="checkbox"
                   checked={sendPush}
                   onChange={(e) => setSendPush(e.target.checked)}
-                  className="size-4 accent-[#7A4A2E]"
+                  className="size-4 accent-[#8A641B]"
                 />
                 Enviar notificación push a todos los vecinos
               </label>
@@ -563,11 +571,17 @@ interface AdminDirectoryViewProps {
     patch: Partial<Pick<House, 'street' | 'number' | 'interiorNumber' | 'familyName' | 'active'>>,
   ) => string | null;
   onInviteUser: (input: InviteUserInput) => { user?: PortalUser; error: string | null };
-  onUpdateUser: (
-    userId: string,
-    patch: Partial<Pick<PortalUser, 'name' | 'role' | 'houseId' | 'active' | 'carCount'>>,
-  ) => string | null;
+  onUpdateUser: (userId: string, patch: UpdateUserPatch) => string | null;
+  onScanQr: (data: ScannedResidentData) => void;
   onNotify: (message: string) => void;
+}
+
+function resizeVehicleDrafts(
+  prev: VehicleDetailsInput[],
+  count: number,
+): VehicleDetailsInput[] {
+  const safe = Math.max(0, Math.min(10, Math.floor(Number.isFinite(count) ? count : 0)));
+  return Array.from({ length: safe }, (_, idx) => prev[idx] ?? { plate: '', color: '', model: '' });
 }
 
 export function AdminDirectoryView({
@@ -576,14 +590,19 @@ export function AdminDirectoryView({
   onUpdateHouse,
   onInviteUser,
   onUpdateUser,
+  onScanQr,
   onNotify,
 }: AdminDirectoryViewProps) {
   // Invite / Register user form
   const [invEmail, setInvEmail] = useState('');
   const [invName, setInvName] = useState('');
+  const [invPhone, setInvPhone] = useState('');
   const [invRole, setInvRole] = useState<UserRole>('resident');
   const [invHouseId, setInvHouseId] = useState<string>('');
   const [invCarCount, setInvCarCount] = useState<string>('1');
+  const [invVehicles, setInvVehicles] = useState<VehicleDetailsInput[]>([
+    { plate: '', color: '', model: '' },
+  ]);
   const [invError, setInvError] = useState<string | null>(null);
   const [lastCreatedUserId, setLastCreatedUserId] = useState<string | null>(null);
 
@@ -603,6 +622,9 @@ export function AdminDirectoryView({
   const activeHousesCount = db.houses.filter((h) => h.active).length;
   const activeUsersCount = db.users.filter((u) => u.active).length;
   const pendingInvitesCount = db.invitations.filter((i) => i.status === 'pending').length;
+  const roleUsage = getRoleUsage(db);
+  const treasurerFull = roleUsage.treasurer >= ROLE_LIMITS.treasurer;
+  const adminFull = roleUsage.admin >= ROLE_LIMITS.admin;
 
   const lastCreatedUser = lastCreatedUserId
     ? db.users.find((u) => u.id === lastCreatedUserId) ?? null
@@ -612,15 +634,36 @@ export function AdminDirectoryView({
     ? db.users.find((u) => u.id === passModalUserId) ?? null
     : null;
 
+  const handleInvCarCountChange = (raw: string) => {
+    setInvCarCount(raw);
+    const parsed = Math.max(0, Math.min(10, Number(raw) || 0));
+    setInvVehicles((prev) => resizeVehicleDrafts(prev, parsed));
+    if (invError) setInvError(null);
+  };
+
+  const handleInvVehicleChange = (
+    idx: number,
+    field: keyof VehicleDetailsInput,
+    value: string,
+  ) => {
+    setInvVehicles((prev) =>
+      prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)),
+    );
+    if (invError) setInvError(null);
+  };
+
   const handleInviteSubmit = (e: FormEvent) => {
     e.preventDefault();
     const parsedCars = Math.max(0, Math.min(10, Number(invCarCount) || 0));
+    const vehiclesPayload = resizeVehicleDrafts(invVehicles, parsedCars);
     const res = onInviteUser({
       email: invEmail,
       name: invName,
+      phone: invPhone,
       role: invRole,
       houseId: invHouseId || null,
       carCount: parsedCars,
+      vehicles: vehiclesPayload,
     });
     if (res.error) {
       setInvError(res.error);
@@ -629,8 +672,11 @@ export function AdminDirectoryView({
     setInvError(null);
     setInvEmail('');
     setInvName('');
+    setInvPhone('');
+    setInvRole('resident');
     setInvHouseId('');
     setInvCarCount('1');
+    setInvVehicles([{ plate: '', color: '', model: '' }]);
     if (res.user) {
       setLastCreatedUserId(res.user.id);
     }
@@ -695,98 +741,180 @@ export function AdminDirectoryView({
         <div className="flex flex-col gap-0.5">
           <h2 className="font-heading text-2xl font-semibold text-ink">Invitar usuario</h2>
           <p className="text-sm text-stone">
-            Cada registro genera automáticamente un código QR personal y un código QR por automóvil.
+            Cada registro genera automáticamente un código QR por automóvil con los datos del titular.
           </p>
         </div>
 
-        <form
-          onSubmit={handleInviteSubmit}
-          className="grid grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-6 lg:items-end"
-        >
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="inv-email" className="text-sm font-semibold text-ink">
-              Correo
-            </label>
-            <input
-              id="inv-email"
-              type="email"
-              value={invEmail}
-              onChange={(e) => setInvEmail(e.target.value)}
-              placeholder="vecino@correo.com"
-              className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
-            />
-          </div>
+        <form onSubmit={handleInviteSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-6 lg:items-end">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="inv-email" className="text-sm font-semibold text-ink">
+                Correo
+              </label>
+              <input
+                id="inv-email"
+                type="email"
+                value={invEmail}
+                onChange={(e) => setInvEmail(e.target.value)}
+                placeholder="vecino@correo.com"
+                className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
+              />
+            </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="inv-name" className="text-sm font-semibold text-ink">
-              Nombre <span className="font-normal text-stone">(opcional)</span>
-            </label>
-            <input
-              id="inv-name"
-              value={invName}
-              onChange={(e) => setInvName(e.target.value)}
-              placeholder="Ana Morales"
-              className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
-            />
-          </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="inv-name" className="text-sm font-semibold text-ink">
+                Nombre <span className="font-normal text-stone">(opcional)</span>
+              </label>
+              <input
+                id="inv-name"
+                value={invName}
+                onChange={(e) => setInvName(e.target.value)}
+                placeholder="Ana Morales"
+                className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
+              />
+            </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="inv-role" className="text-sm font-semibold text-ink">
-              Rol
-            </label>
-            <select
-              id="inv-role"
-              value={invRole}
-              onChange={(e) => setInvRole(e.target.value as UserRole)}
-              className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none focus-visible:border-cantera"
-            >
-              <option value="resident">Vecino</option>
-              <option value="treasurer">Tesorería</option>
-              <option value="admin">Mesa directiva</option>
-              <option value="guard">Caseta</option>
-            </select>
-          </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="inv-phone" className="text-sm font-semibold text-ink">
+                Teléfono
+              </label>
+              <input
+                id="inv-phone"
+                type="tel"
+                value={invPhone}
+                onChange={(e) => setInvPhone(e.target.value)}
+                placeholder="442 123 4567"
+                className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
+              />
+            </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="inv-house" className="text-sm font-semibold text-ink">
-              Casa
-            </label>
-            <select
-              id="inv-house"
-              value={invHouseId}
-              onChange={(e) => setInvHouseId(e.target.value)}
-              className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none focus-visible:border-cantera"
-            >
-              <option value="">Sin casa</option>
-              {db.houses.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {formatHouseLabel(h)}
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="inv-role" className="text-sm font-semibold text-ink">
+                Rol
+              </label>
+              <select
+                id="inv-role"
+                value={invRole}
+                onChange={(e) => setInvRole(e.target.value as UserRole)}
+                className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-sm font-medium outline-none focus-visible:border-cantera"
+              >
+                <option value="resident">Vecino</option>
+                <option value="treasurer" disabled={treasurerFull}>
+                  Tesorería ({roleUsage.treasurer}/{ROLE_LIMITS.treasurer}
+                  {treasurerFull ? ' · Lleno' : ''})
                 </option>
-              ))}
-            </select>
+                <option value="admin" disabled={adminFull}>
+                  Mesa directiva ({roleUsage.admin}/{ROLE_LIMITS.admin}
+                  {adminFull ? ' · Lleno' : ''})
+                </option>
+                <option value="guard">Caseta</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="inv-house" className="text-sm font-semibold text-ink">
+                Casa
+              </label>
+              <select
+                id="inv-house"
+                value={invHouseId}
+                onChange={(e) => setInvHouseId(e.target.value)}
+                className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-sm font-medium outline-none focus-visible:border-cantera"
+              >
+                <option value="">Sin casa</option>
+                {db.houses.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {formatHouseLabel(h)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="inv-cars" className="text-sm font-semibold text-ink">
+                Número de autos
+              </label>
+              <input
+                id="inv-cars"
+                type="number"
+                min={0}
+                max={10}
+                value={invCarCount}
+                onChange={(e) => handleInvCarCountChange(e.target.value)}
+                className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none focus-visible:border-cantera"
+              />
+            </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="inv-cars" className="text-sm font-semibold text-ink">
-              Número de autos
-            </label>
-            <input
-              id="inv-cars"
-              type="number"
-              min={0}
-              max={10}
-              value={invCarCount}
-              onChange={(e) => setInvCarCount(e.target.value)}
-              className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none focus-visible:border-cantera"
-            />
-          </div>
+          {invVehicles.length > 0 && (
+            <div className="flex flex-col gap-2.5 rounded-2xl border border-line bg-sand/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-ink">
+                  {invVehicles.length === 1
+                    ? 'Características del automóvil'
+                    : `Características de los automóviles (${invVehicles.length})`}
+                </span>
+                <span className="text-xs text-stone">
+                  Límites de rol: máx. {ROLE_LIMITS.treasurer} Tesorería · máx. {ROLE_LIMITS.admin}{' '}
+                  Mesa directiva
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {invVehicles.map((vehicle, idx) => (
+                  <div
+                    key={idx}
+                    className="flex flex-col gap-2 rounded-xl border border-line bg-white p-3"
+                  >
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold tracking-[0.06em] text-cantera uppercase">
+                      <Car className="size-3.5" />
+                      Automóvil {idx + 1}
+                    </span>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <input
+                        aria-label={`Placa automóvil ${idx + 1}`}
+                        required
+                        value={vehicle.plate ?? ''}
+                        onChange={(e) =>
+                          handleInvVehicleChange(idx, 'plate', e.target.value.toUpperCase())
+                        }
+                        placeholder="Placa (ABC-123-A)"
+                        className="h-10 rounded-lg border border-input bg-white px-2.5 font-mono text-sm font-medium uppercase outline-none placeholder:font-sans placeholder:normal-case placeholder:text-stone/60 focus-visible:border-cantera"
+                      />
+                      <input
+                        aria-label={`Color automóvil ${idx + 1}`}
+                        required
+                        value={vehicle.color ?? ''}
+                        onChange={(e) => handleInvVehicleChange(idx, 'color', e.target.value)}
+                        placeholder="Color"
+                        className="h-10 rounded-lg border border-input bg-white px-2.5 text-sm font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
+                      />
+                      <input
+                        aria-label={`Modelo automóvil ${idx + 1}`}
+                        required
+                        value={vehicle.model ?? ''}
+                        onChange={(e) => handleInvVehicleChange(idx, 'model', e.target.value)}
+                        placeholder="Modelo"
+                        className="h-10 rounded-lg border border-input bg-white px-2.5 text-sm font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
-          <button
-            type="submit"
-            className="inline-flex h-12 items-center justify-center rounded-xl bg-cantera px-4 text-base font-semibold text-white transition-all hover:bg-cantera-dark active:translate-y-px"
-          >
-            Enviar invitación
-          </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs text-stone">
+              Tesorería: {roleUsage.treasurer}/{ROLE_LIMITS.treasurer} · Mesa directiva:{' '}
+              {roleUsage.admin}/{ROLE_LIMITS.admin}
+            </span>
+            <button
+              type="submit"
+              className="inline-flex h-12 items-center justify-center rounded-xl bg-cantera px-6 text-base font-semibold text-white transition-all hover:bg-cantera-dark active:translate-y-px"
+            >
+              Enviar invitación
+            </button>
+          </div>
         </form>
         {invError && (
           <p role="alert" className="rounded-xl bg-bad-bg px-3.5 py-2 text-sm font-medium text-bad">
@@ -800,45 +928,64 @@ export function AdminDirectoryView({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold tracking-[0.06em] text-cantera uppercase">
-                  Códigos QR generados para {lastCreatedUser.name}
+                  Clave {lastCreatedUser.residentKey} · Códigos QR por automóvil · Titular:{' '}
+                  {lastCreatedUser.name}
                 </p>
                 <p className="text-sm text-ink-soft">
-                  QR personal: <span className="font-mono font-semibold text-ink">{lastCreatedUser.qrCode}</span> ·{' '}
-                  {lastCreatedUser.carCount}{' '}
-                  {lastCreatedUser.carCount === 1 ? 'QR de automóvil' : 'QR de automóviles'}
+                  {lastCreatedUser.email}
+                  {lastCreatedUser.phone ? ` · Tel. ${lastCreatedUser.phone}` : ''} ·{' '}
+                  {lastCreatedUser.vehicleQrCodes.length}{' '}
+                  {lastCreatedUser.vehicleQrCodes.length === 1
+                    ? 'QR de automóvil'
+                    : 'QR de automóviles'}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setPassModalUserId(lastCreatedUser.id)}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-cantera px-3.5 text-sm font-semibold text-white hover:bg-cantera-dark"
-              >
-                <QrCode className="size-4" />
-                Generar pase de entrada
-              </button>
+              {lastCreatedUser.vehicleQrCodes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPassModalUserId(lastCreatedUser.id)}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-cantera px-3.5 text-sm font-semibold text-white hover:bg-cantera-dark"
+                >
+                  <QrCode className="size-4" />
+                  Generar pase de entrada
+                </button>
+              )}
             </div>
 
-            <div className="flex flex-wrap gap-2.5">
-              <div className="flex items-center gap-2 rounded-xl border border-line bg-white px-2.5 py-2">
-                <QrCodeSvg code={lastCreatedUser.qrCode} size={42} />
-                <div className="flex flex-col">
-                  <span className="text-xs font-semibold text-ink">Residente</span>
-                  <span className="font-mono text-[11px] text-stone">{lastCreatedUser.qrCode}</span>
-                </div>
+            {lastCreatedUser.vehicleQrCodes.length > 0 && (
+              <div className="flex flex-wrap gap-2.5">
+                {lastCreatedUser.vehicleQrCodes.map((v) => {
+                  const specs = formatVehicleSummary(v);
+                  const createdHouse = lastCreatedUser.houseId
+                    ? houseMap.get(lastCreatedUser.houseId) ?? null
+                    : null;
+                  const qrUrl = buildVehicleScanUrl(lastCreatedUser, v, createdHouse);
+                  const scanData = createScannedResidentData(lastCreatedUser, v, createdHouse);
+                  return (
+                    <div
+                      key={v.code}
+                      className="flex items-center gap-2.5 rounded-xl border border-line bg-white px-3 py-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onScanQr(scanData)}
+                        aria-label={`Escanear QR ${v.code}`}
+                        className="shrink-0 rounded-lg transition-transform hover:scale-105"
+                      >
+                        <QrCodeSvg code={qrUrl} size={44} />
+                      </button>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-semibold text-ink">
+                          {v.label} · {lastCreatedUser.name}
+                        </span>
+                        {specs && <span className="text-[11px] text-ink-soft">{specs}</span>}
+                        <span className="font-mono text-[11px] text-stone">{v.code}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              {lastCreatedUser.vehicleQrCodes.map((v) => (
-                <div
-                  key={v.code}
-                  className="flex items-center gap-2 rounded-xl border border-line bg-white px-2.5 py-2"
-                >
-                  <QrCodeSvg code={v.code} size={42} />
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-ink">{v.label}</span>
-                    <span className="font-mono text-[11px] text-stone">{v.code}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            )}
           </div>
         )}
 
@@ -1007,10 +1154,15 @@ export function AdminDirectoryView({
                 <tr key={u.id} className="border-b border-line last:border-0">
                   <td className="px-4 py-2.5">
                     <div className="flex flex-col">
-                      <span className="font-semibold text-ink">{u.name}</span>
-                      <span className="text-xs text-stone">{u.email}</span>
-                      <span className="font-mono text-[11px] whitespace-nowrap text-stone">
-                        {u.qrCode}
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded bg-night px-1.5 py-0.5 font-mono text-[11px] font-semibold text-gold-light">
+                          {u.residentKey}
+                        </span>
+                        <span className="font-semibold text-ink">{u.name}</span>
+                      </div>
+                      <span className="text-xs text-stone">
+                        {u.email}
+                        {u.phone ? ` · ${u.phone}` : ''}
                       </span>
                     </div>
                   </td>
@@ -1018,12 +1170,26 @@ export function AdminDirectoryView({
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {u.houseId ? formatHouseLabel(houseMap.get(u.houseId)) : '—'}
                   </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-sand-2 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">
-                      <Car className="size-3.5 text-cantera" />
-                      {u.carCount} {u.carCount === 1 ? 'auto' : 'autos'} ·{' '}
-                      {u.vehicleQrCodes.length + 1} QR
-                    </span>
+                  <td className="px-3 py-2.5">
+                    <div className="flex flex-col gap-1">
+                      <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-sand-2 px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap text-ink-soft">
+                        <Car className="size-3.5 text-cantera" />
+                        {u.carCount} {u.carCount === 1 ? 'auto' : 'autos'} ·{' '}
+                        {u.vehicleQrCodes.length} QR
+                      </span>
+                      {u.vehicleQrCodes.some((v) => v.plate || v.model || v.color) && (
+                        <div className="flex flex-col gap-0.5">
+                          {u.vehicleQrCodes.map((v) => {
+                            const specs = formatVehicleSummary(v);
+                            return specs ? (
+                              <span key={v.code} className="text-[11px] text-stone">
+                                {v.label}: {specs}
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     <span
@@ -1077,6 +1243,7 @@ export function AdminDirectoryView({
       {/* Edit User Modal */}
       {editingUser && (
         <EditUserModal
+          db={db}
           user={editingUser}
           houses={db.houses}
           onClose={() => setEditingUser(null)}
@@ -1088,13 +1255,14 @@ export function AdminDirectoryView({
         />
       )}
 
-      {/* Entry Pass Hangtag Modal (10cm x 7cm) */}
+      {/* Entry Pass Corbatín Modal (19cm x 9cm) */}
       {passModalUser && (
         <EntryPassModal
           user={passModalUser}
           house={passModalUser.houseId ? houseMap.get(passModalUser.houseId) ?? null : null}
           onClose={() => setPassModalUserId(null)}
           onNotify={onNotify}
+          onScanQr={onScanQr}
         />
       )}
     </>
@@ -1190,7 +1358,7 @@ function EditHouseModal({
               type="checkbox"
               checked={active}
               onChange={(e) => setActive(e.target.checked)}
-              className="size-4 accent-[#7A4A2E]"
+              className="size-4 accent-[#8A641B]"
             />
             Casa activa
           </label>
@@ -1219,38 +1387,75 @@ function EditHouseModal({
 }
 
 function EditUserModal({
+  db,
   user,
   houses,
   onClose,
   onSave,
 }: {
+  db: PortalDatabase;
   user: PortalUser;
   houses: House[];
   onClose: () => void;
-  onSave: (
-    patch: Partial<Pick<PortalUser, 'name' | 'role' | 'houseId' | 'active' | 'carCount'>>,
-  ) => string | null;
+  onSave: (patch: UpdateUserPatch) => string | null;
 }) {
   const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone ?? '');
   const [role, setRole] = useState<UserRole>(user.role);
   const [houseId, setHouseId] = useState(user.houseId ?? '');
   const [carCount, setCarCount] = useState(String(user.carCount));
+  const [vehicles, setVehicles] = useState<VehicleDetailsInput[]>(() =>
+    resizeVehicleDrafts(
+      user.vehicleQrCodes.map((v) => ({
+        plate: v.plate ?? '',
+        color: v.color ?? '',
+        model: v.model ?? '',
+      })),
+      user.carCount,
+    ),
+  );
   const [active, setActive] = useState(user.active);
+  const [error, setError] = useState<string | null>(null);
+
+  const otherUsage = getRoleUsage(db, user.id);
+  const treasurerFull = active && otherUsage.treasurer >= ROLE_LIMITS.treasurer;
+  const adminFull = active && otherUsage.admin >= ROLE_LIMITS.admin;
+
+  const handleCarCountChange = (raw: string) => {
+    setCarCount(raw);
+    const parsed = Math.max(0, Math.min(10, Number(raw) || 0));
+    setVehicles((prev) => resizeVehicleDrafts(prev, parsed));
+  };
+
+  const handleVehicleChange = (idx: number, field: keyof VehicleDetailsInput, value: string) => {
+    setVehicles((prev) =>
+      prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)),
+    );
+  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    onSave({
+    const parsedCars = Math.max(0, Math.min(10, Number(carCount) || 0));
+    const hasAnyVehicleDetail = vehicles.some(
+      (v) => Boolean(v.plate?.trim() || v.color?.trim() || v.model?.trim()),
+    );
+    const err = onSave({
       name,
+      phone,
       role,
       houseId: houseId || null,
-      carCount: Math.max(0, Math.min(10, Number(carCount) || 0)),
+      carCount: parsedCars,
+      vehicles: hasAnyVehicleDetail ? resizeVehicleDrafts(vehicles, parsedCars) : undefined,
       active,
     });
+    if (err) {
+      setError(err);
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md rounded-[20px] border border-line bg-white p-6 shadow-xl">
+      <div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-[20px] border border-line bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-heading text-2xl font-semibold text-ink">Editar usuario</h3>
           <button
@@ -1264,13 +1469,26 @@ function EditUserModal({
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-semibold text-ink">Nombre</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="h-11 rounded-[10px] border border-input px-3 text-base font-medium outline-none focus-visible:border-cantera"
-            />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-semibold text-ink">Nombre</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="h-11 rounded-[10px] border border-input px-3 text-base font-medium outline-none focus-visible:border-cantera"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-semibold text-ink">Número de teléfono</label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="442 123 4567"
+                className="h-11 rounded-[10px] border border-input px-3 text-base font-medium outline-none focus-visible:border-cantera"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -1278,12 +1496,21 @@ function EditUserModal({
               <label className="text-sm font-semibold text-ink">Rol</label>
               <select
                 value={role}
-                onChange={(e) => setRole(e.target.value as UserRole)}
-                className="h-11 rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none focus-visible:border-cantera"
+                onChange={(e) => {
+                  setRole(e.target.value as UserRole);
+                  if (error) setError(null);
+                }}
+                className="h-11 rounded-[10px] border border-input bg-white px-3 text-sm font-medium outline-none focus-visible:border-cantera"
               >
                 <option value="resident">Vecino</option>
-                <option value="treasurer">Tesorería</option>
-                <option value="admin">Mesa directiva</option>
+                <option value="treasurer" disabled={treasurerFull}>
+                  Tesorería ({otherUsage.treasurer}/{ROLE_LIMITS.treasurer}
+                  {treasurerFull ? ' · Lleno' : ''})
+                </option>
+                <option value="admin" disabled={adminFull}>
+                  Mesa directiva ({otherUsage.admin}/{ROLE_LIMITS.admin}
+                  {adminFull ? ' · Lleno' : ''})
+                </option>
                 <option value="guard">Caseta</option>
               </select>
             </div>
@@ -1295,7 +1522,7 @@ function EditUserModal({
                 min={0}
                 max={10}
                 value={carCount}
-                onChange={(e) => setCarCount(e.target.value)}
+                onChange={(e) => handleCarCountChange(e.target.value)}
                 className="h-11 rounded-[10px] border border-input px-3 text-base font-medium outline-none focus-visible:border-cantera"
               />
             </div>
@@ -1317,15 +1544,66 @@ function EditUserModal({
             </select>
           </div>
 
+          {vehicles.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-semibold text-ink">
+                {vehicles.length === 1
+                  ? 'Datos del automóvil'
+                  : `Datos de los automóviles (${vehicles.length})`}
+              </span>
+              {vehicles.map((v, idx) => (
+                <div
+                  key={idx}
+                  className="flex flex-col gap-2 rounded-xl border border-line bg-sand/60 p-3"
+                >
+                  <span className="text-xs font-semibold text-cantera uppercase">
+                    Automóvil {idx + 1}
+                  </span>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <input
+                      value={v.plate ?? ''}
+                      onChange={(e) =>
+                        handleVehicleChange(idx, 'plate', e.target.value.toUpperCase())
+                      }
+                      placeholder="Placa"
+                      className="h-9 rounded-lg border border-input bg-white px-2.5 font-mono text-sm uppercase outline-none focus-visible:border-cantera"
+                    />
+                    <input
+                      value={v.color ?? ''}
+                      onChange={(e) => handleVehicleChange(idx, 'color', e.target.value)}
+                      placeholder="Color"
+                      className="h-9 rounded-lg border border-input bg-white px-2.5 text-sm outline-none focus-visible:border-cantera"
+                    />
+                    <input
+                      value={v.model ?? ''}
+                      onChange={(e) => handleVehicleChange(idx, 'model', e.target.value)}
+                      placeholder="Modelo"
+                      className="h-9 rounded-lg border border-input bg-white px-2.5 text-sm outline-none focus-visible:border-cantera"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <label className="flex items-center gap-2.5 text-sm font-medium text-ink">
             <input
               type="checkbox"
               checked={active}
-              onChange={(e) => setActive(e.target.checked)}
-              className="size-4 accent-[#7A4A2E]"
+              onChange={(e) => {
+                setActive(e.target.checked);
+                if (error) setError(null);
+              }}
+              className="size-4 accent-[#8A641B]"
             />
             Usuario activo
           </label>
+
+          {error && (
+            <p role="alert" className="rounded-xl bg-bad-bg px-3.5 py-2 text-sm font-medium text-bad">
+              {error}
+            </p>
+          )}
 
           <div className="mt-2 flex justify-end gap-2">
             <button

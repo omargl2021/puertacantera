@@ -14,6 +14,7 @@ import {
   AdminPaymentsView,
 } from './components/AdminTreasuryViews';
 import { AuthView } from './components/AuthView';
+import { PrintCorbatinesView } from './components/PrintCorbatinesView';
 import { PrivacyView } from './components/PrivacyView';
 import { ResidentAccount } from './components/ResidentAccount';
 import { ResidentHome } from './components/ResidentHome';
@@ -23,9 +24,10 @@ import {
   ResidentReports,
   ResidentVisits,
 } from './components/ResidentPages';
+import { ResidentQrScanModal } from './components/ResidentQrScanModal';
 import { ResidentShell } from './components/ResidentShell';
 import { SEED_DATABASE } from './data/seedData';
-import type { AppRoute, PortalDatabase, PortalUser } from './types/portal';
+import type { AppRoute, PortalDatabase, PortalUser, ScannedResidentData } from './types/portal';
 import {
   addHouse,
   cancelVisitPass,
@@ -35,10 +37,11 @@ import {
   createVisitPass,
   DEFAULT_NOW_ISO,
   deleteNotice,
-  generateUserQrCode,
+  generateNextResidentKey,
   generateVehicleQrCodes,
   inviteUser,
   normalizePortalDatabase,
+  parseResidentQrScanParams,
   publishNotice,
   reviewPayment,
   submitPayment,
@@ -60,6 +63,7 @@ const ROUTE_TITLES: Record<AppRoute, string> = {
   '/reportes': 'Reportes · Puerta Cantera',
   '/avisos': 'Avisos · Puerta Cantera',
   '/cuenta': 'Mi cuenta · Puerta Cantera',
+  '/corbatines': 'Imprimir corbatín · Puerta Cantera',
   '/admin/tesoreria': 'Pagos por validar · Puerta Cantera',
   '/admin/tesoreria/casas': 'Estado por casa · Puerta Cantera',
   '/admin/tesoreria/cuotas': 'Cuotas · Puerta Cantera',
@@ -67,6 +71,7 @@ const ROUTE_TITLES: Record<AppRoute, string> = {
   '/admin/reportes': 'Reportes · Puerta Cantera',
   '/admin/visitas': 'Bitácora de visitas · Puerta Cantera',
   '/admin/padron': 'Vecinos y casas · Puerta Cantera',
+  '/admin/corbatines': 'Imprimir corbatín · Puerta Cantera',
   '/admin/bitacora': 'Bitácora de cambios · Puerta Cantera',
 };
 
@@ -117,8 +122,19 @@ export default function App() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(initialSession.current.userId);
   const [route, setRoute] = useState<AppRoute>(initialSession.current.route);
   const [prevRoute, setPrevRoute] = useState<AppRoute>('/login');
+  const [scannedResident, setScannedResident] = useState<ScannedResidentData | null>(() =>
+    parseResidentQrScanParams(window.location.search, db, window.location.origin),
+  );
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
+
+  const handleCloseScannedResident = () => {
+    setScannedResident(null);
+    if (window.location.search.includes('scan=') || window.location.search.includes('qr=')) {
+      const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+      window.history.replaceState({}, '', cleanUrl);
+    }
+  };
 
   const showToast = (message: string) => {
     setToast(message);
@@ -169,23 +185,26 @@ export default function App() {
       showToast(`Bienvenido, ${existing.name}`);
       return;
     }
-    // If user logs in with an invited or custom email, sign in as resident with personal & vehicle QR
+    // If user logs in with an invited or custom email, sign in as resident with consecutive key & vehicle QR
     const seed = `${normalized}-${Date.now()}`;
+    const vehicleQrCodes = generateVehicleQrCodes(seed, 1);
+    const residentKey = generateNextResidentKey(db.users);
     const newUser: PortalUser = {
       id: `usr-${Date.now()}`,
+      residentKey,
       name: normalized.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
       email: normalized,
       role: 'resident',
-      houseId: db.houses[0]?.id ?? null,
+      houseId: null,
       active: true,
-      qrCode: generateUserQrCode(seed),
+      qrCode: vehicleQrCodes[0]?.code ?? '',
       carCount: 1,
-      vehicleQrCodes: generateVehicleQrCodes(seed, 1),
+      vehicleQrCodes,
     };
     setDb((prev) => ({ ...prev, users: [...prev.users, newUser] }));
     setCurrentUserId(newUser.id);
     navigate('/');
-    showToast(`Bienvenido, ${newUser.name}`);
+    showToast(`Bienvenido residente, ${newUser.name} (${residentKey})`);
   };
 
   const handleLogout = () => {
@@ -211,9 +230,14 @@ export default function App() {
 
   if (route === '/privacidad') {
     return (
-      <PrivacyView
-        onBack={() => navigate(currentUser ? (prevRoute === '/privacidad' ? '/' : prevRoute) : '/login')}
-      />
+      <>
+        <PrivacyView
+          onBack={() => navigate(currentUser ? (prevRoute === '/privacidad' ? '/' : prevRoute) : '/login')}
+        />
+        {scannedResident && (
+          <ResidentQrScanModal data={scannedResident} onClose={handleCloseScannedResident} />
+        )}
+      </>
     );
   }
 
@@ -227,6 +251,9 @@ export default function App() {
           onNavigateMode={(m) => navigate(m === 'recover' ? '/recuperar' : '/login')}
           onOpenPrivacy={() => navigate('/privacidad')}
         />
+        {scannedResident && (
+          <ResidentQrScanModal data={scannedResident} onClose={handleCloseScannedResident} />
+        )}
         {toast && <ToastBanner message={toast} />}
       </>
     );
@@ -349,8 +376,11 @@ export default function App() {
                 if (res.error) return { error: res.error };
                 setDb(res.db);
                 const cars = res.user?.carCount ?? 0;
+                const keyTag = res.user?.residentKey ? ` (${res.user.residentKey})` : '';
                 showToast(
-                  `Registro creado con QR personal y ${cars} ${cars === 1 ? 'QR de auto' : 'QR de autos'}.`,
+                  cars > 0
+                    ? `Registro${keyTag} creado con ${cars} ${cars === 1 ? 'QR de auto' : 'QR de autos'}.`
+                    : `Registro${keyTag} creado sin automóviles asignados.`,
                 );
                 return { user: res.user, error: null };
               }}
@@ -361,12 +391,25 @@ export default function App() {
                 showToast('Usuario actualizado.');
                 return null;
               }}
+              onScanQr={setScannedResident}
+              onNotify={showToast}
+            />
+          )}
+
+          {route === '/admin/corbatines' && (
+            <PrintCorbatinesView
+              db={db}
+              isAdminLayout
+              onScanQr={setScannedResident}
               onNotify={showToast}
             />
           )}
 
           {route === '/admin/bitacora' && <AdminAuditLogView db={db} />}
         </AdminShell>
+        {scannedResident && (
+          <ResidentQrScanModal data={scannedResident} onClose={handleCloseScannedResident} />
+        )}
         {toast && <ToastBanner message={toast} />}
       </>
     );
@@ -375,7 +418,38 @@ export default function App() {
   return (
     <>
       <ResidentShell currentRoute={route} onNavigate={navigate}>
-        {route === '/' && <ResidentHome db={db} user={currentUser} onNavigate={navigate} />}
+        {route === '/' && (
+          <ResidentHome
+            db={db}
+            user={currentUser}
+            onNavigate={navigate}
+            onLogout={handleLogout}
+            onAddResident={(input) => {
+              const res = inviteUser(db, input, currentUser.name, nowIso());
+              if (res.error) return { error: res.error };
+              setDb(res.db);
+              const cars = res.user?.carCount ?? 0;
+              const keyTag = res.user?.residentKey ? ` (${res.user.residentKey})` : '';
+              showToast(
+                cars > 0
+                  ? `Residente${keyTag} registrado con ${cars} ${cars === 1 ? 'QR de auto' : 'QR de autos'}.`
+                  : `Residente${keyTag} registrado sin automóviles.`,
+              );
+              return { user: res.user, error: null };
+            }}
+            onScanQr={setScannedResident}
+            onNotify={showToast}
+          />
+        )}
+
+        {route === '/corbatines' && (
+          <PrintCorbatinesView
+            db={db}
+            onNavigate={navigate}
+            onScanQr={setScannedResident}
+            onNotify={showToast}
+          />
+        )}
 
         {route === '/avisos' && <ResidentNotices db={db} onNavigate={navigate} />}
 
@@ -400,6 +474,7 @@ export default function App() {
                 showToast(`Perfil cambiado a ${target.name}`);
               }
             }}
+            onScanQr={setScannedResident}
             onNotify={showToast}
             onLogout={handleLogout}
           />
@@ -464,6 +539,9 @@ export default function App() {
           />
         )}
       </ResidentShell>
+      {scannedResident && (
+        <ResidentQrScanModal data={scannedResident} onClose={handleCloseScannedResident} />
+      )}
       {toast && <ToastBanner message={toast} />}
     </>
   );
@@ -476,8 +554,8 @@ function ToastBanner({ message }: { message: string }) {
       aria-live="polite"
       className="pointer-events-none fixed inset-x-0 bottom-20 z-50 flex justify-center px-4 lg:inset-x-auto lg:right-6 lg:bottom-6"
     >
-      <div className="pointer-events-auto flex items-center gap-2 rounded-xl border border-night-line bg-night px-4 py-2.5 text-sm font-medium text-white shadow-lg">
-        <CheckCircle2 className="size-4 shrink-0 text-ok-bg" />
+      <div className="pointer-events-auto flex items-center gap-2 rounded-xl border border-gold/35 bg-night px-4 py-2.5 text-sm font-medium text-white shadow-xl">
+        <CheckCircle2 className="size-4 shrink-0 text-gold" />
         <span>{message}</span>
       </div>
     </div>

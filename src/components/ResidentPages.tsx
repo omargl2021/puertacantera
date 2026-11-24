@@ -1,13 +1,16 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   CheckCircle2,
   ChevronLeft,
   Copy,
+  ImagePlus,
   Pin,
   Plus,
   QrCode,
   Receipt,
   ShieldCheck,
+  Trash2,
+  X,
   XCircle,
 } from 'lucide-react';
 import type {
@@ -22,6 +25,7 @@ import type {
 import {
   computeHouseBalance,
   DEFAULT_TODAY_ISO,
+  formatFileSizeEs,
   formatHouseLabel,
   formatMxnWhole,
   formatShortDateEs,
@@ -29,6 +33,7 @@ import {
   NOTICE_CATEGORY_LABELS,
   PAYMENT_STATUS_LABELS,
   REPORT_STATUS_LABELS,
+  validateReceiptImageFile,
   type CreateReportInput,
   type CreateVisitPassInput,
   type SubmitPaymentInput,
@@ -110,9 +115,13 @@ export function ResidentPayments({
   const [plan, setPlan] = useState<'monthly' | 'semiannual' | 'annual'>('monthly');
   const [periodLabel, setPeriodLabel] = useState('Noviembre 2026');
   const [method, setMethod] = useState<PaymentRecord['method']>('Transferencia SPEI');
-  const [reference, setReference] = useState('');
+  const [receiptImageUrl, setReceiptImageUrl] = useState('');
+  const [receiptFileName, setReceiptFileName] = useState('');
+  const [receiptFileSize, setReceiptFileSize] = useState<number>(0);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [zoomedReceiptUrl, setZoomedReceiptUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const planConfig = {
     monthly: { label: 'Mensual', months: 1, amount: fee.monthlyMxn, defaultPeriod: 'Noviembre 2026' },
@@ -145,6 +154,74 @@ export function ResidentPayments({
     setPeriodLabel(planConfig[nextPlan].defaultPeriod);
   };
 
+  const clearReceipt = () => {
+    setReceiptImageUrl('');
+    setReceiptFileName('');
+    setReceiptFileSize(0);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleReceiptChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validationError = validateReceiptImageFile({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    });
+    if (validationError) {
+      clearReceipt();
+      setError(validationError);
+      return;
+    }
+
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rawDataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!rawDataUrl) {
+        setError('No se pudo leer la imagen seleccionada.');
+        return;
+      }
+
+      // Keep stored receipt lightweight for browser persistence while preserving clarity
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1400;
+        if (img.naturalWidth <= maxDim && img.naturalHeight <= maxDim && file.size <= 900 * 1024) {
+          setReceiptImageUrl(rawDataUrl);
+          setReceiptFileName(file.name);
+          setReceiptFileSize(file.size);
+          return;
+        }
+        const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          setReceiptImageUrl(canvas.toDataURL('image/jpeg', 0.82));
+        } else {
+          setReceiptImageUrl(rawDataUrl);
+        }
+        setReceiptFileName(file.name);
+        setReceiptFileSize(file.size);
+      };
+      img.onerror = () => {
+        setReceiptImageUrl(rawDataUrl);
+        setReceiptFileName(file.name);
+        setReceiptFileSize(file.size);
+      };
+      img.src = rawDataUrl;
+    };
+    reader.onerror = () => {
+      setError('No se pudo leer la imagen seleccionada.');
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const cfg = planConfig[plan];
@@ -153,7 +230,9 @@ export function ResidentPayments({
       monthsCovered: cfg.months,
       amountMxn: cfg.amount,
       method,
-      reference,
+      receiptImageUrl,
+      receiptFileName,
+      receiptFileSizeBytes: receiptFileSize,
       notes,
     });
     if (err) {
@@ -161,7 +240,7 @@ export function ResidentPayments({
       return;
     }
     setError(null);
-    setReference('');
+    clearReceipt();
     setNotes('');
   };
 
@@ -255,16 +334,76 @@ export function ResidentPayments({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="pay-ref" className="text-sm font-semibold text-ink">
-                Referencia o folio de transferencia
+              <label htmlFor="pay-receipt" className="text-sm font-semibold text-ink">
+                Comprobante de pago
               </label>
+
               <input
-                id="pay-ref"
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder="Ej. SPEI-849201"
-                className="h-12 w-full rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none placeholder:text-stone/60 focus-visible:border-cantera"
+                ref={fileInputRef}
+                id="pay-receipt"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/*"
+                onChange={handleReceiptChange}
+                className="sr-only"
               />
+
+              {!receiptImageUrl ? (
+                <label
+                  htmlFor="pay-receipt"
+                  className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[14px] border border-dashed border-chip-line bg-sand/50 px-4 py-6 text-center transition-colors hover:border-cantera hover:bg-cantera-soft/30"
+                >
+                  <span className="flex size-11 items-center justify-center rounded-xl bg-cantera-soft text-cantera">
+                    <ImagePlus className="size-5" />
+                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-semibold text-ink">
+                      Seleccionar imagen del comprobante
+                    </span>
+                    <span className="text-xs text-stone">
+                      JPG, PNG, WebP o HEIC · 1 imagen (máx. 5 MB)
+                    </span>
+                  </div>
+                </label>
+              ) : (
+                <div className="flex items-center gap-3 rounded-[14px] border border-line bg-sand/60 p-3">
+                  <button
+                    type="button"
+                    onClick={() => setZoomedReceiptUrl(receiptImageUrl)}
+                    className="size-16 shrink-0 overflow-hidden rounded-xl border border-line bg-white"
+                    aria-label="Ver comprobante en grande"
+                  >
+                    <img
+                      src={receiptImageUrl}
+                      alt="Vista previa del comprobante de pago"
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate text-sm font-semibold text-ink">
+                      {receiptFileName}
+                    </span>
+                    <span className="text-xs text-stone">
+                      {formatFileSizeEs(receiptFileSize)} · Imagen lista
+                    </span>
+                    <div className="mt-1 flex items-center gap-3">
+                      <label
+                        htmlFor="pay-receipt"
+                        className="cursor-pointer text-xs font-semibold text-cantera hover:underline"
+                      >
+                        Cambiar imagen
+                      </label>
+                      <button
+                        type="button"
+                        onClick={clearReceipt}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-bad hover:underline"
+                      >
+                        <Trash2 className="size-3" />
+                        Quitar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -305,7 +444,7 @@ export function ResidentPayments({
             myPayments.map((p) => (
               <div
                 key={p.id}
-                className="flex flex-col gap-1.5 rounded-[14px] border border-line bg-white p-4"
+                className="flex flex-col gap-2 rounded-[14px] border border-line bg-white p-4"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold text-ink">
@@ -326,9 +465,27 @@ export function ResidentPayments({
                   </span>
                 </div>
                 <p className="text-xs text-stone">
-                  {p.folio} · {p.method} · Ref: <span className="font-mono">{p.reference}</span> ·{' '}
-                  {formatShortDateEs(p.createdAt)}
+                  {p.folio} · {p.method} · {formatShortDateEs(p.createdAt)}
                 </p>
+                {p.receiptImageUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setZoomedReceiptUrl(p.receiptImageUrl ?? null)}
+                    className="flex items-center gap-2.5 rounded-xl border border-line bg-sand/50 p-2 text-left transition-colors hover:bg-sand-2/70"
+                  >
+                    <img
+                      src={p.receiptImageUrl}
+                      alt={`Comprobante ${p.folio}`}
+                      className="size-11 shrink-0 rounded-lg object-cover"
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-xs font-semibold text-ink">
+                        {p.receiptFileName || 'Comprobante de pago'}
+                      </span>
+                      <span className="text-[11px] text-cantera">Ver imagen completa</span>
+                    </div>
+                  </button>
+                )}
                 {p.reviewNote && (
                   <p className="rounded-lg bg-sand px-2.5 py-1.5 text-xs text-ink-soft">
                     Tesorería: {p.reviewNote}
@@ -339,6 +496,35 @@ export function ResidentPayments({
           )}
         </section>
       </div>
+
+      {zoomedReceiptUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Comprobante de pago"
+          onClick={() => setZoomedReceiptUrl(null)}
+        >
+          <div
+            className="relative max-h-[88vh] max-w-lg overflow-hidden rounded-2xl bg-white p-2 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              aria-label="Cerrar vista previa"
+              onClick={() => setZoomedReceiptUrl(null)}
+              className="absolute top-3 right-3 flex size-9 items-center justify-center rounded-full bg-night/80 text-white hover:bg-night"
+            >
+              <X className="size-4" />
+            </button>
+            <img
+              src={zoomedReceiptUrl}
+              alt="Comprobante de pago completo"
+              className="max-h-[82vh] w-full rounded-xl object-contain"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

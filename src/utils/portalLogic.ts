@@ -1,7 +1,9 @@
+import QRCode from 'qrcode';
 import type {
   AuditLogEntry,
   CommunityNotice,
   CommunityReport,
+  CorbatinItem,
   FeeScheduleVersion,
   House,
   Invitation,
@@ -12,7 +14,9 @@ import type {
   PortalUser,
   ReportCategory,
   ReportStatus,
+  ScannedResidentData,
   UserRole,
+  VehicleDetailsInput,
   VehicleQrCode,
   VisitAccessType,
   VisitPass,
@@ -57,6 +61,245 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   resident: 'Vecino',
   guard: 'Caseta',
 };
+
+export const RESIDENTIAL_STREETS = [
+  'Av. de las Flores',
+  'Calle Violeta',
+  'Av. Cantera',
+  'Calle Girasol',
+  'Calle Flor de Loto',
+  'Calle Flor de Calabaza',
+] as const;
+
+export const ROLE_LIMITS = {
+  treasurer: 1,
+  admin: 5,
+} as const;
+
+export function getRoleUsage(
+  db: PortalDatabase,
+  excludeUserId?: string,
+): { treasurer: number; admin: number } {
+  let treasurer = 0;
+  let admin = 0;
+  for (const u of db.users) {
+    if (!u.active) continue;
+    if (excludeUserId && u.id === excludeUserId) continue;
+    if (u.role === 'treasurer') treasurer += 1;
+    if (u.role === 'admin') admin += 1;
+  }
+  return { treasurer, admin };
+}
+
+export function validateRoleLimit(
+  db: PortalDatabase,
+  role: UserRole,
+  options?: { excludeUserId?: string; nextActive?: boolean },
+): string | null {
+  if (options?.nextActive === false) return null;
+  const usage = getRoleUsage(db, options?.excludeUserId);
+  if (role === 'treasurer' && usage.treasurer >= ROLE_LIMITS.treasurer) {
+    return `Solo puede haber ${ROLE_LIMITS.treasurer} usuario con el rol de Tesorería.`;
+  }
+  if (role === 'admin' && usage.admin >= ROLE_LIMITS.admin) {
+    return `Solo puede haber máximo ${ROLE_LIMITS.admin} usuarios con el rol de Mesa directiva.`;
+  }
+  return null;
+}
+
+export function formatVehicleSummary(vehicle: VehicleQrCode): string {
+  const parts = [vehicle.plate, vehicle.model, vehicle.color]
+    .map((p) => p?.trim())
+    .filter((p): p is string => Boolean(p));
+  return parts.join(' · ');
+}
+
+export function normalizeTextKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function normalizePlateKey(plate: string): string {
+  return plate.trim().toUpperCase().replace(/[\s-]+/g, '');
+}
+
+export function normalizeAddressKey(
+  street: string,
+  number: string,
+  interiorNumber?: string | null,
+): string {
+  return `${normalizeTextKey(street)}|${normalizeTextKey(number)}|${normalizeTextKey(interiorNumber ?? '')}`;
+}
+
+export function formatResidentKey(sequenceNumber: number): string {
+  return `RES${String(Math.max(1, Math.floor(sequenceNumber))).padStart(3, '0')}`;
+}
+
+export function generateNextResidentKey(users: Array<Pick<PortalUser, 'residentKey'>>): string {
+  let maxNum = 0;
+  for (const u of users) {
+    const match = /^RES(\d+)$/i.exec((u.residentKey ?? '').trim());
+    if (match) {
+      const parsed = Number.parseInt(match[1], 10);
+      if (Number.isFinite(parsed) && parsed > maxNum) {
+        maxNum = parsed;
+      }
+    }
+  }
+  return formatResidentKey(maxNum + 1);
+}
+
+export function buildVehicleQrPayload(
+  user: Pick<PortalUser, 'name' | 'email' | 'phone'> & { residentKey?: string },
+  vehicle: VehicleQrCode,
+  house?: House | null,
+): string {
+  const parts = [
+    `CODIGO:${vehicle.code}`,
+    user.residentKey ? `CLAVE:${user.residentKey}` : null,
+    `TITULAR:${user.name}`,
+    user.phone ? `TEL:${user.phone}` : null,
+    house ? `CASA:${formatHouseLabel(house)}` : null,
+    `AUTO:${vehicle.label}`,
+    vehicle.plate ? `PLACA:${vehicle.plate}` : null,
+    vehicle.model ? `MODELO:${vehicle.model}` : null,
+    vehicle.color ? `COLOR:${vehicle.color}` : null,
+  ].filter((p): p is string => Boolean(p));
+  return parts.join(' | ');
+}
+
+export function buildVehicleScanUrl(
+  user: Pick<PortalUser, 'residentKey' | 'name' | 'email' | 'phone' | 'role' | 'active'>,
+  vehicle: VehicleQrCode,
+  house?: House | null,
+  origin?: string,
+): string {
+  const resolvedOrigin =
+    origin ??
+    (typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'https://puertacantera.app');
+  const params = new URLSearchParams();
+  params.set('scan', '1');
+  params.set('code', vehicle.code);
+  if (user.residentKey) params.set('key', user.residentKey);
+  params.set('name', user.name);
+  if (user.phone) params.set('phone', user.phone);
+  if (user.email) params.set('email', user.email);
+  params.set('role', user.role);
+  if (house) params.set('house', formatHouseLabel(house));
+  params.set('car', vehicle.label);
+  if (vehicle.plate) params.set('plate', vehicle.plate);
+  if (vehicle.model) params.set('model', vehicle.model);
+  if (vehicle.color) params.set('color', vehicle.color);
+  return `${resolvedOrigin.replace(/\/$/, '')}/?${params.toString()}`;
+}
+
+export function createScannedResidentData(
+  user: PortalUser,
+  vehicle: VehicleQrCode,
+  house?: House | null,
+  origin?: string,
+): ScannedResidentData {
+  return {
+    code: vehicle.code,
+    residentKey: user.residentKey,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    houseLabel: house ? formatHouseLabel(house) : 'Sin casa asignada',
+    active: user.active,
+    vehicleLabel: vehicle.label,
+    plate: vehicle.plate,
+    model: vehicle.model,
+    color: vehicle.color,
+    qrValue: buildVehicleScanUrl(user, vehicle, house, origin),
+  };
+}
+
+export function parseResidentQrScanParams(
+  search: string,
+  db?: PortalDatabase,
+  origin?: string,
+): ScannedResidentData | null {
+  const query = search.startsWith('?') ? search.slice(1) : search;
+  const params = new URLSearchParams(query);
+  const code = params.get('code')?.trim() || '';
+  const isScan = params.get('scan') === '1' || Boolean(params.get('qr')?.trim());
+  const lookupCode = code || params.get('qr')?.trim() || '';
+
+  if (!isScan && !lookupCode) return null;
+
+  // Prefer live database record if the scanned code exists locally
+  if (db && lookupCode) {
+    const normalizedLookup = lookupCode.toUpperCase();
+    for (const user of db.users) {
+      const matchedVehicle = user.vehicleQrCodes.find(
+        (v) => v.code.toUpperCase() === normalizedLookup,
+      );
+      if (matchedVehicle) {
+        const house = user.houseId ? db.houses.find((h) => h.id === user.houseId) ?? null : null;
+        return createScannedResidentData(user, matchedVehicle, house, origin);
+      }
+      if (user.residentKey.toUpperCase() === normalizedLookup && user.vehicleQrCodes[0]) {
+        const house = user.houseId ? db.houses.find((h) => h.id === user.houseId) ?? null : null;
+        return createScannedResidentData(user, user.vehicleQrCodes[0], house, origin);
+      }
+    }
+  }
+
+  // Fallback to self-contained URL parameters (works when scanned from any external phone!)
+  const name = params.get('name')?.trim() || '';
+  if (!name && !lookupCode) return null;
+
+  const rawRole = params.get('role') as UserRole | null;
+  const role: UserRole =
+    rawRole && ['resident', 'treasurer', 'admin', 'guard'].includes(rawRole)
+      ? rawRole
+      : 'resident';
+
+  return {
+    code: lookupCode || 'PC-QR',
+    residentKey: params.get('key')?.trim() || 'RES001',
+    name: name || 'Residente Puerta Cantera',
+    email: params.get('email')?.trim() || '—',
+    phone: params.get('phone')?.trim() || undefined,
+    role,
+    houseLabel: params.get('house')?.trim() || 'Sin casa asignada',
+    active: true,
+    vehicleLabel: params.get('car')?.trim() || 'Auto 1',
+    plate: params.get('plate')?.trim() || undefined,
+    model: params.get('model')?.trim() || undefined,
+    color: params.get('color')?.trim() || undefined,
+    qrValue: `${(origin ?? 'https://puertacantera.app').replace(/\/$/, '')}/?${params.toString()}`,
+  };
+}
+
+export function getAllCorbatines(db: PortalDatabase): CorbatinItem[] {
+  const houseMap = new Map(db.houses.map((h) => [h.id, h]));
+  const items: CorbatinItem[] = [];
+  for (const user of db.users) {
+    const house = user.houseId ? houseMap.get(user.houseId) ?? null : null;
+    for (const vehicle of user.vehicleQrCodes) {
+      items.push({
+        id: `${user.id}:${vehicle.code}`,
+        user,
+        house,
+        vehicle,
+      });
+    }
+  }
+  return items;
+}
+
+export function chunkCorbatines<T>(items: T[], perPage: 1 | 4): T[][] {
+  const size = perPage === 4 ? 4 : 1;
+  const pages: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    pages.push(items.slice(i, i + size));
+  }
+  return pages;
+}
 
 export const NOTICE_CATEGORY_LABELS: Record<NoticeCategory, string> = {
   administracion: 'Administración',
@@ -247,12 +490,45 @@ export function addAuditEntry(
   };
 }
 
+export const MAX_RECEIPT_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+const ALLOWED_IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i;
+
+export function validateReceiptImageFile(file: {
+  name: string;
+  type: string;
+  size: number;
+}): string | null {
+  const mime = (file.type || '').toLowerCase();
+  const isImageMime = mime.startsWith('image/');
+  const hasImageExt = ALLOWED_IMAGE_EXTENSIONS.test(file.name || '');
+
+  if (!isImageMime && !hasImageExt) {
+    return 'Solo se admiten imágenes (JPG, PNG, WebP, GIF o HEIC).';
+  }
+  if (file.size <= 0) {
+    return 'El archivo seleccionado está vacío.';
+  }
+  if (file.size > MAX_RECEIPT_IMAGE_BYTES) {
+    return 'La imagen supera el límite máximo de 5 MB.';
+  }
+  return null;
+}
+
+export function formatFileSizeEs(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export interface SubmitPaymentInput {
   periodLabel: string;
   monthsCovered: number;
   amountMxn: number;
   method: PaymentRecord['method'];
-  reference: string;
+  receiptImageUrl: string;
+  receiptFileName: string;
+  receiptFileSizeBytes?: number;
   notes?: string;
 }
 
@@ -271,12 +547,19 @@ export function submitPayment(
   if (!Number.isFinite(input.amountMxn) || input.amountMxn <= 0) {
     return { db, error: 'El monto debe ser mayor a $0.' };
   }
-  if (!input.reference.trim()) {
-    return { db, error: 'Ingresa la referencia o clave de rastreo del comprobante.' };
+  if (!input.receiptImageUrl.trim()) {
+    return { db, error: 'Adjunta la imagen de tu comprobante de pago (máximo 5 MB).' };
+  }
+  if (
+    input.receiptFileSizeBytes !== undefined &&
+    input.receiptFileSizeBytes > MAX_RECEIPT_IMAGE_BYTES
+  ) {
+    return { db, error: 'La imagen supera el límite máximo de 5 MB.' };
   }
 
   const nextNum = db.payments.length + 1;
   const folio = `P-${String(nextNum).padStart(4, '0')}`;
+  const cleanFileName = input.receiptFileName.trim() || `comprobante-${folio}.jpg`;
   const payment: PaymentRecord = {
     id: `pay-${Date.now()}-${nextNum}`,
     folio,
@@ -287,7 +570,10 @@ export function submitPayment(
     monthsCovered: Math.max(1, Math.round(input.monthsCovered)),
     amountMxn: Math.round(input.amountMxn),
     method: input.method,
-    reference: input.reference.trim().toUpperCase(),
+    reference: cleanFileName,
+    receiptImageUrl: input.receiptImageUrl,
+    receiptFileName: cleanFileName,
+    receiptFileSizeBytes: input.receiptFileSizeBytes,
     notes: input.notes?.trim() || undefined,
     status: 'pending',
     createdAt: nowIso.slice(0, 10),
@@ -299,7 +585,7 @@ export function submitPayment(
   };
 
   nextDb = addAuditEntry(nextDb, user.name, 'Subió un comprobante de pago', {
-    afterSummary: `folio: ${payment.folio} · amount: ${formatMxnWhole(payment.amountMxn)} · months: ${payment.monthsCovered}`,
+    afterSummary: `folio: ${payment.folio} · amount: ${formatMxnWhole(payment.amountMxn)} · file: ${cleanFileName}`,
     nowIso,
   });
 
@@ -609,20 +895,30 @@ export function generateVehicleQrCodes(
   seedText: string,
   carCount: number,
   existing: VehicleQrCode[] = [],
+  vehicleDetails?: VehicleDetailsInput[],
 ): VehicleQrCode[] {
   const safeCount = Math.max(0, Math.min(10, Math.floor(Number.isFinite(carCount) ? carCount : 0)));
   const result: VehicleQrCode[] = [];
   for (let i = 1; i <= safeCount; i += 1) {
     const prev = existing.find((item) => item.index === i);
-    if (prev) {
-      result.push(prev);
-    } else {
-      result.push({
-        index: i,
-        label: `Auto ${i}`,
-        code: `PC-A${i}-${fnv1aNumber(`auto:${seedText}:${i}`)}`,
-      });
-    }
+    const detail = vehicleDetails?.[i - 1];
+    const plate =
+      detail?.plate !== undefined
+        ? detail.plate.trim().toUpperCase() || undefined
+        : prev?.plate;
+    const color =
+      detail?.color !== undefined ? detail.color.trim() || undefined : prev?.color;
+    const model =
+      detail?.model !== undefined ? detail.model.trim() || undefined : prev?.model;
+
+    result.push({
+      index: i,
+      label: prev?.label ?? `Auto ${i}`,
+      code: prev?.code ?? `PC-A${i}-${fnv1aNumber(`auto:${seedText}:${i}`)}`,
+      plate,
+      color,
+      model,
+    });
   }
   return result;
 }
@@ -640,30 +936,54 @@ export function normalizePortalDatabase(raw: PortalDatabase): PortalDatabase {
     };
   });
 
+  let maxSeq = 0;
+  for (const u of raw.users) {
+    const match = /^RES(\d+)$/i.exec((u.residentKey ?? '').trim());
+    if (match) {
+      const parsed = Number.parseInt(match[1], 10);
+      if (Number.isFinite(parsed) && parsed > maxSeq) maxSeq = parsed;
+    }
+  }
+
+  const usedKeys = new Set<string>();
   const users = raw.users.map((u) => {
-    const qrCode = u.qrCode || generateUserQrCode(`${u.email}-${u.id}`);
+    let residentKey = (u.residentKey ?? '').trim().toUpperCase();
+    if (!/^RES\d+$/i.test(residentKey) || usedKeys.has(residentKey)) {
+      maxSeq += 1;
+      residentKey = formatResidentKey(maxSeq);
+    }
+    usedKeys.add(residentKey);
     const carCount = typeof u.carCount === 'number' && Number.isFinite(u.carCount) ? u.carCount : 1;
     const vehicleQrCodes =
       Array.isArray(u.vehicleQrCodes) && u.vehicleQrCodes.length === carCount
         ? u.vehicleQrCodes
         : generateVehicleQrCodes(`${u.email}-${u.id}`, carCount, u.vehicleQrCodes ?? []);
+    const qrCode = vehicleQrCodes[0]?.code ?? u.qrCode ?? '';
     return {
       ...u,
+      residentKey,
       qrCode,
       carCount,
       vehicleQrCodes,
     };
   });
 
+  const userKeyByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u.residentKey]));
+
   const invitations = (raw.invitations ?? []).map((inv) => {
-    const qrCode = inv.qrCode || generateUserQrCode(`${inv.email}-${inv.id}`);
     const carCount = typeof inv.carCount === 'number' && Number.isFinite(inv.carCount) ? inv.carCount : 1;
     const vehicleQrCodes =
       Array.isArray(inv.vehicleQrCodes) && inv.vehicleQrCodes.length === carCount
         ? inv.vehicleQrCodes
         : generateVehicleQrCodes(`${inv.email}-${inv.id}`, carCount, inv.vehicleQrCodes ?? []);
+    const qrCode = vehicleQrCodes[0]?.code ?? inv.qrCode ?? '';
+    const residentKey =
+      inv.residentKey?.trim().toUpperCase() ||
+      userKeyByEmail.get(inv.email.toLowerCase()) ||
+      formatResidentKey(maxSeq + 1);
     return {
       ...inv,
+      residentKey,
       qrCode,
       carCount,
       vehicleQrCodes,
@@ -810,12 +1130,11 @@ export function addHouse(
 
   const duplicate = db.houses.some(
     (h) =>
-      h.street.toLowerCase() === street.toLowerCase() &&
-      h.number.toLowerCase() === number.toLowerCase() &&
-      (h.interiorNumber ?? '').toLowerCase() === (interiorNumber ?? '').toLowerCase(),
+      normalizeAddressKey(h.street, h.number, h.interiorNumber) ===
+      normalizeAddressKey(street, number, interiorNumber),
   );
   if (duplicate) {
-    return { db, error: 'Ya existe una casa con esa calle, número y número interior.' };
+    return { db, error: 'Ya existe una casa con esa dirección. Las direcciones no se pueden repetir.' };
   }
 
   const house: House = {
@@ -866,6 +1185,16 @@ export function updateHouse(
     return { db, error: 'Calle y número son obligatorios.' };
   }
 
+  const duplicateAddress = db.houses.some(
+    (h) =>
+      h.id !== houseId &&
+      normalizeAddressKey(h.street, h.number, h.interiorNumber) ===
+        normalizeAddressKey(updated.street, updated.number, updated.interiorNumber),
+  );
+  if (duplicateAddress) {
+    return { db, error: 'Ya existe otra casa con esa dirección. Las direcciones no se pueden repetir.' };
+  }
+
   let nextDb: PortalDatabase = {
     ...db,
     houses: db.houses.map((h) => (h.id === houseId ? updated : h)),
@@ -883,9 +1212,50 @@ export function updateHouse(
 export interface InviteUserInput {
   email: string;
   name?: string;
+  phone?: string;
   role: UserRole;
   houseId: string | null;
+  street?: string;
+  exteriorNumber?: string;
+  interiorNumber?: string;
   carCount?: number;
+  vehicles?: VehicleDetailsInput[];
+}
+
+function validateVehiclesInput(
+  db: PortalDatabase,
+  carCount: number,
+  vehicles?: VehicleDetailsInput[],
+  excludeUserId?: string,
+): string | null {
+  if (carCount <= 0 || !vehicles) return null;
+
+  const existingPlates = new Set<string>();
+  for (const u of db.users) {
+    if (excludeUserId && u.id === excludeUserId) continue;
+    for (const v of u.vehicleQrCodes) {
+      if (v.plate?.trim()) {
+        existingPlates.add(normalizePlateKey(v.plate));
+      }
+    }
+  }
+
+  const seenInBatch = new Set<string>();
+  for (let i = 0; i < carCount; i += 1) {
+    const v = vehicles[i];
+    if (!v?.plate?.trim() || !v?.color?.trim() || !v?.model?.trim()) {
+      return `Completa placa, color y modelo del Automóvil ${i + 1}.`;
+    }
+    const plateKey = normalizePlateKey(v.plate);
+    if (seenInBatch.has(plateKey)) {
+      return `La placa ${v.plate.trim().toUpperCase()} está repetida en este registro.`;
+    }
+    if (existingPlates.has(plateKey)) {
+      return `La placa ${v.plate.trim().toUpperCase()} ya está registrada en otro automóvil.`;
+    }
+    seenInBatch.add(plateKey);
+  }
+  return null;
 }
 
 export function inviteUser(
@@ -898,17 +1268,12 @@ export function inviteUser(
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { db, error: 'Ingresa un correo válido para el registro.' };
   }
-  if (db.users.some((u) => u.email.toLowerCase() === email)) {
+  if (db.users.some((u) => u.email.trim().toLowerCase() === email)) {
     return { db, error: 'Ese correo ya pertenece a un usuario registrado.' };
   }
-  if (db.invitations.some((i) => i.email.toLowerCase() === email && i.status === 'pending')) {
+  if (db.invitations.some((i) => i.email.trim().toLowerCase() === email && i.status === 'pending')) {
     return { db, error: 'Ya existe una invitación pendiente para ese correo.' };
   }
-
-  const carCount =
-    input.carCount !== undefined && Number.isFinite(input.carCount)
-      ? Math.max(0, Math.min(10, Math.floor(input.carCount)))
-      : 1;
 
   const displayName =
     input.name?.trim() ||
@@ -917,16 +1282,83 @@ export function inviteUser(
       .replace(/[._-]/g, ' ')
       .replace(/\b\w/g, (c) => c.toUpperCase());
 
+  const nameKey = normalizeTextKey(displayName);
+  if (db.users.some((u) => normalizeTextKey(u.name) === nameKey)) {
+    return {
+      db,
+      error: 'Ese nombre ya está registrado. Los nombres de residentes no se pueden repetir.',
+    };
+  }
+
+  const roleLimitError = validateRoleLimit(db, input.role, { nextActive: true });
+  if (roleLimitError) {
+    return { db, error: roleLimitError };
+  }
+
+  const carCount =
+    input.carCount !== undefined && Number.isFinite(input.carCount)
+      ? Math.max(0, Math.min(10, Math.floor(input.carCount)))
+      : 1;
+
+  const vehiclesError = validateVehiclesInput(db, carCount, input.vehicles);
+  if (vehiclesError) {
+    return { db, error: vehiclesError };
+  }
+
+  // Enforce unique house address: neither street+ext+int nor an already-assigned houseId may repeat
+  let resolvedHouseId: string | null = input.houseId || null;
+  let nextHouses = db.houses;
+  const trimmedStreet = input.street?.trim() || '';
+  if (trimmedStreet) {
+    const extNum = input.exteriorNumber?.trim() || '';
+    if (!extNum) {
+      return { db, error: 'Ingresa el Número ext de la casa.' };
+    }
+    const intNum = input.interiorNumber?.trim() || null;
+    const addrKey = normalizeAddressKey(trimmedStreet, extNum, intNum);
+    const existingHouse = db.houses.find(
+      (h) => normalizeAddressKey(h.street, h.number, h.interiorNumber) === addrKey,
+    );
+    if (existingHouse) {
+      return {
+        db,
+        error: 'Esa dirección de casa ya está registrada. Las direcciones no se pueden repetir.',
+      };
+    }
+    const createdHouse: House = {
+      id: `house-${Date.now()}-${db.houses.length + 1}`,
+      street: trimmedStreet,
+      number: extNum,
+      interiorNumber: intNum,
+      familyName: displayName,
+      active: true,
+    };
+    nextHouses = [...db.houses, createdHouse];
+    resolvedHouseId = createdHouse.id;
+  } else if (resolvedHouseId) {
+    const alreadyAssigned = db.users.some((u) => u.houseId === resolvedHouseId);
+    if (alreadyAssigned) {
+      return {
+        db,
+        error: 'Esa dirección de casa ya está asignada a otro residente. No se puede repetir.',
+      };
+    }
+  }
+
+  const residentKey = generateNextResidentKey(db.users);
+  const phone = input.phone?.trim() || undefined;
   const seed = `${email}-${nowIso}-${db.users.length}`;
-  const qrCode = generateUserQrCode(seed);
-  const vehicleQrCodes = generateVehicleQrCodes(seed, carCount);
+  const vehicleQrCodes = generateVehicleQrCodes(seed, carCount, [], input.vehicles);
+  const qrCode = vehicleQrCodes[0]?.code ?? '';
 
   const user: PortalUser = {
     id: `usr-${Date.now()}-${db.users.length + 1}`,
+    residentKey,
     name: displayName,
     email,
+    phone,
     role: input.role,
-    houseId: input.houseId || null,
+    houseId: resolvedHouseId,
     active: true,
     qrCode,
     carCount,
@@ -935,10 +1367,12 @@ export function inviteUser(
 
   const invitation: Invitation = {
     id: `inv-${Date.now()}`,
+    residentKey,
     email,
     name: displayName,
+    phone,
     role: input.role,
-    houseId: input.houseId || null,
+    houseId: resolvedHouseId,
     carCount,
     qrCode,
     vehicleQrCodes,
@@ -948,45 +1382,92 @@ export function inviteUser(
 
   let nextDb: PortalDatabase = {
     ...db,
+    houses: nextHouses,
     users: [...db.users, user],
     invitations: [invitation, ...db.invitations],
   };
 
   nextDb = addAuditEntry(nextDb, actorName, 'Registró e invitó a un usuario', {
-    afterSummary: `role: ${invitation.role} · email: ${invitation.email} · qr: ${qrCode} · autos: ${carCount} · houseId: ${invitation.houseId ?? 'null'}`,
+    afterSummary: `clave: ${residentKey} · role: ${invitation.role} · email: ${invitation.email}${phone ? ` · tel: ${phone}` : ''} · autos: ${carCount} · qrAutos: ${vehicleQrCodes.map((v) => v.code).join(', ') || 'ninguno'} · houseId: ${invitation.houseId ?? 'null'}`,
     nowIso,
   });
 
   return { db: nextDb, invitation, user };
 }
 
+export interface UpdateUserPatch {
+  name?: string;
+  phone?: string;
+  role?: UserRole;
+  houseId?: string | null;
+  active?: boolean;
+  carCount?: number;
+  vehicles?: VehicleDetailsInput[];
+}
+
 export function updateUserAccess(
   db: PortalDatabase,
   userId: string,
-  patch: Partial<Pick<PortalUser, 'name' | 'role' | 'houseId' | 'active' | 'carCount'>>,
+  patch: UpdateUserPatch,
   actorName: string,
   nowIso = DEFAULT_NOW_ISO,
 ): { db: PortalDatabase; error?: string } {
   const existing = db.users.find((u) => u.id === userId);
   if (!existing) return { db, error: 'Usuario no encontrado.' };
 
+  const nextName = patch.name !== undefined ? patch.name.trim() || existing.name : existing.name;
+  const nameKey = normalizeTextKey(nextName);
+  if (db.users.some((u) => u.id !== userId && normalizeTextKey(u.name) === nameKey)) {
+    return {
+      db,
+      error: 'Ese nombre ya está registrado. Los nombres de residentes no se pueden repetir.',
+    };
+  }
+
+  const nextHouseId = patch.houseId !== undefined ? patch.houseId : existing.houseId;
+  if (nextHouseId && db.users.some((u) => u.id !== userId && u.houseId === nextHouseId)) {
+    return {
+      db,
+      error: 'Esa dirección de casa ya está asignada a otro residente. No se puede repetir.',
+    };
+  }
+
+  const nextRole = patch.role ?? existing.role;
+  const nextActive = patch.active !== undefined ? patch.active : existing.active;
+
+  const roleLimitError = validateRoleLimit(db, nextRole, {
+    excludeUserId: userId,
+    nextActive,
+  });
+  if (roleLimitError) {
+    return { db, error: roleLimitError };
+  }
+
   const nextCarCount =
     patch.carCount !== undefined && Number.isFinite(patch.carCount)
       ? Math.max(0, Math.min(10, Math.floor(patch.carCount)))
       : existing.carCount;
 
+  const vehiclesError = validateVehiclesInput(db, nextCarCount, patch.vehicles, userId);
+  if (vehiclesError) {
+    return { db, error: vehiclesError };
+  }
+
   const nextVehicleQrs = generateVehicleQrCodes(
     `${existing.email}-${existing.id}`,
     nextCarCount,
     existing.vehicleQrCodes,
+    patch.vehicles,
   );
 
   const updated: PortalUser = {
     ...existing,
-    name: patch.name !== undefined ? patch.name.trim() || existing.name : existing.name,
-    role: patch.role ?? existing.role,
-    houseId: patch.houseId !== undefined ? patch.houseId : existing.houseId,
-    active: patch.active !== undefined ? patch.active : existing.active,
+    name: nextName,
+    phone: patch.phone !== undefined ? patch.phone.trim() || undefined : existing.phone,
+    role: nextRole,
+    houseId: nextHouseId,
+    active: nextActive,
+    qrCode: nextVehicleQrs[0]?.code ?? '',
     carCount: nextCarCount,
     vehicleQrCodes: nextVehicleQrs,
   };
@@ -997,8 +1478,8 @@ export function updateUserAccess(
   };
 
   nextDb = addAuditEntry(nextDb, actorName, 'Cambió el acceso de un usuario', {
-    beforeSummary: `role: ${existing.role} · active: ${existing.active} · autos: ${existing.carCount} · houseId: ${existing.houseId ?? 'null'}`,
-    afterSummary: `role: ${updated.role} · active: ${updated.active} · autos: ${updated.carCount} · houseId: ${updated.houseId ?? 'null'}`,
+    beforeSummary: `clave: ${existing.residentKey} · role: ${existing.role} · active: ${existing.active} · autos: ${existing.carCount} · houseId: ${existing.houseId ?? 'null'}`,
+    afterSummary: `clave: ${updated.residentKey} · role: ${updated.role} · active: ${updated.active} · autos: ${updated.carCount} · houseId: ${updated.houseId ?? 'null'}`,
     nowIso,
   });
 
@@ -1057,54 +1538,14 @@ export function buildPaymentsCsv(db: PortalDatabase): string {
 }
 
 /**
- * Deterministic 21x21 QR-like matrix for visitor pass rendering.
+ * Generates a real, camera-scannable ISO 18004 QR code boolean matrix.
  */
 export function buildQrMatrix(code: string): boolean[][] {
-  const size = 21;
-  const grid: boolean[][] = Array.from({ length: size }, () =>
-    Array.from({ length: size }, () => false),
+  const text = code.trim() || 'PUERTA-CANTERA';
+  const qr = QRCode.create(text, { errorCorrectionLevel: 'M' });
+  const size = qr.modules.size;
+  const grid: boolean[][] = Array.from({ length: size }, (_, r) =>
+    Array.from({ length: size }, (_, c) => Boolean(qr.modules.get(r, c))),
   );
-
-  const drawFinder = (r0: number, c0: number) => {
-    for (let r = 0; r < 7; r += 1) {
-      for (let c = 0; c < 7; c += 1) {
-        const isBorder = r === 0 || r === 6 || c === 0 || c === 6;
-        const isCore = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-        grid[r0 + r][c0 + c] = isBorder || isCore;
-      }
-    }
-  };
-
-  drawFinder(0, 0);
-  drawFinder(0, size - 7);
-  drawFinder(size - 7, 0);
-
-  for (let i = 8; i < size - 8; i += 1) {
-    grid[6][i] = i % 2 === 0;
-    grid[i][6] = i % 2 === 0;
-  }
-
-  let hash = 2166136261;
-  for (let i = 0; i < code.length; i += 1) {
-    hash ^= code.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  const isReserved = (r: number, c: number) =>
-    (r < 8 && c < 8) ||
-    (r < 8 && c >= size - 8) ||
-    (r >= size - 8 && c < 8) ||
-    r === 6 ||
-    c === 6;
-
-  let state = hash >>> 0;
-  for (let r = 0; r < size; r += 1) {
-    for (let c = 0; c < size; c += 1) {
-      if (isReserved(r, c)) continue;
-      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-      grid[r][c] = ((state >>> 24) & 1) === 1;
-    }
-  }
-
   return grid;
 }

@@ -19,14 +19,13 @@ export function PrivacyView({ onBack }: PrivacyViewProps) {
         </h1>
 
         <p>
-          La mesa directiva de <strong>Puerta Cantera Residencial</strong> (Morelia, Michoacán) es
-          responsable de los datos personales que se registran en este portal vecinal.
+          La mesa directiva de <strong>Puerta Cantera Residencial</strong> administra los datos que se registran.
         </p>
 
         <h2 className="font-heading text-xl font-semibold text-ink">¿Qué datos usamos?</h2>
         <ul className="list-disc space-y-1 pl-5">
           <li>
-            De vecinos: nombre, correo, teléfono (opcional), casa a la que pertenecen y comprobantes
+            De vecinos: nombre, correo, teléfono, casa a la que pertenecen y comprobantes
             de pago de cuotas.
           </li>
           <li>
@@ -40,7 +39,7 @@ export function PrivacyView({ onBack }: PrivacyViewProps) {
         <p>
           Para llevar el registro de cuotas de mantenimiento, controlar el acceso al
           fraccionamiento, dar seguimiento a reportes y enviar avisos de la comunidad. No se
-          procesan pagos en línea ni se comparten datos con terceros con fines comerciales.
+          procesan pagos en línea ni se comparten datos.
         </p>
 
         <h2 className="font-heading text-xl font-semibold text-ink">¿Quién los ve?</h2>
@@ -58,9 +57,8 @@ export function PrivacyView({ onBack }: PrivacyViewProps) {
 
         <h2 className="font-heading text-xl font-semibold text-ink">Tus derechos</h2>
         <p>
-          Puedes pedir el acceso, corrección o eliminación de tus datos (derechos ARCO) a la mesa
-          directiva. Los comprobantes y fotos se guardan en almacenamiento privado y solo se abren
-          con enlaces temporales.
+          Puedes pedir el acceso, corrección o eliminación de tus datos a la mesa directiva. Los comprobantes y
+          fotos se guardan en almacenamiento privado y solo se abren con enlaces temporales.
         </p>
       </article>
     </main>

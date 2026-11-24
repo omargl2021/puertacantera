@@ -1,36 +1,47 @@
 @import "tailwindcss";
 
 @theme {
-  --color-night: #2B2724;
-  --color-night-2: #3A3531;
-  --color-night-line: #46403B;
-  --color-night-text: #EAE4DC;
-  --color-night-muted: #B6ACA2;
-  --color-night-label: #91877D;
+  /* Obsidian architectural dark surfaces */
+  --color-night: #171411;
+  --color-night-2: #24201B;
+  --color-night-line: #39322A;
+  --color-night-text: #F4EFE6;
+  --color-night-muted: #B6AA99;
+  --color-night-label: #9F8E75;
 
-  --color-sand: #F6F2EC;
-  --color-sand-2: #EFEAE1;
-  --color-line: #E5DFD5;
-  --color-chip-line: #DBD3C7;
-  --color-input: #D8D0C4;
+  /* Architectural gold spectrum */
+  --color-gold: #D4AF37;
+  --color-gold-light: #E8CB7D;
+  --color-gold-dark: #8A641B;
+  --color-gold-soft: #F7EFE0;
 
-  --color-ink: #23201D;
-  --color-ink-soft: #48423C;
-  --color-stone: #736B63;
+  /* Warm alabaster / limestone neutral canvas */
+  --color-sand: #F7F4EE;
+  --color-sand-2: #EFEAE0;
+  --color-line: #E5DDD0;
+  --color-chip-line: #D8CEBD;
+  --color-input: #D4C9B8;
 
-  --color-primary: #7A4A2E;
-  --color-cantera: #7A4A2E;
-  --color-cantera-dark: #633B24;
-  --color-cantera-soft: #F3E8E1;
+  /* Crisp ink hierarchy */
+  --color-ink: #1B1815;
+  --color-ink-soft: #4A433B;
+  --color-stone: #6E655B;
 
-  --color-ok: #2D6A4F;
-  --color-ok-bg: #E6F4EC;
-  --color-warn: #9A5B13;
-  --color-warn-bg: #FDF2E2;
-  --color-bad: #8A2E1F;
-  --color-bad-bg: #FAE8E5;
-  --color-info: #2B5B84;
-  --color-info-bg: #E8F1F8;
+  /* Burnished gold primary accent (WCAG AA >= 4.9:1 with white text) */
+  --color-primary: #8A641B;
+  --color-cantera: #8A641B;
+  --color-cantera-dark: #6E4E12;
+  --color-cantera-soft: #F7EFE0;
+
+  /* Semantic state palette */
+  --color-ok: #245E45;
+  --color-ok-bg: #E6F3EC;
+  --color-warn: #8F5411;
+  --color-warn-bg: #FCF0DC;
+  --color-bad: #8E2B1E;
+  --color-bad-bg: #FAE7E4;
+  --color-info: #245177;
+  --color-info-bg: #E7F0F7;
 
   --font-heading: "Fraunces", Georgia, serif;
   --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -62,7 +73,7 @@
   }
 
   *:focus-visible {
-    outline: 2px solid var(--color-cantera);
+    outline: 2px solid var(--color-gold-dark);
     outline-offset: 2px;
   }
 
@@ -78,25 +89,97 @@
 
 @media print {
   @page {
-    size: 7cm 10cm;
-    margin: 0;
+    margin: 0.6cm;
   }
 
   body * {
     visibility: hidden;
   }
 
-  .entry-pass-print-target,
-  .entry-pass-print-target * {
+  body[data-print-mode="scan-card"] .qr-scan-print-target,
+  body[data-print-mode="scan-card"] .qr-scan-print-target * {
     visibility: visible;
   }
 
-  .entry-pass-print-target {
+  body[data-print-mode="scan-card"] .qr-scan-print-target {
     position: fixed !important;
     inset: 0 !important;
-    margin: 0 !important;
-    width: 7cm !important;
-    height: 10cm !important;
+    margin: auto !important;
+    max-width: 14cm !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body[data-print-mode="scan-card"] .qr-scan-no-print {
+    display: none !important;
+  }
+
+  body[data-print-mode="corbatin-batch"] .corbatin-print-root,
+  body[data-print-mode="corbatin-batch"] .corbatin-print-root * {
+    visibility: visible;
+  }
+
+  body[data-print-mode="corbatin-batch"] .corbatin-print-root {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    background: #FFFFFF !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body[data-print-mode="corbatin-batch"] .corbatin-print-page {
+    page-break-after: always;
+    break-after: page;
+    display: grid !important;
+    justify-content: center !important;
+    align-content: center !important;
+    gap: 0.5cm !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #FFFFFF !important;
+  }
+
+  body[data-print-mode="corbatin-batch"] .corbatin-print-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  body[data-print-mode="corbatin-batch"] .corbatin-print-page[data-per-page="1"] {
+    grid-template-columns: 9cm !important;
+  }
+
+  body[data-print-mode="corbatin-batch"] .corbatin-print-page[data-per-page="4"] {
+    grid-template-columns: 9cm 9cm !important;
+  }
+
+  body[data-print-mode="corbatin-batch"] .corbatin-print-card {
+    width: 9cm !important;
+    height: 19cm !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body:not([data-print-mode]) .entry-pass-print-target,
+  body:not([data-print-mode]) .entry-pass-print-target *,
+  body[data-print-mode="corbatin-single"] .entry-pass-print-target,
+  body[data-print-mode="corbatin-single"] .entry-pass-print-target * {
+    visibility: visible;
+  }
+
+  body:not([data-print-mode]) .entry-pass-print-target,
+  body[data-print-mode="corbatin-single"] .entry-pass-print-target {
+    position: fixed !important;
+    inset: 0 !important;
+    margin: auto !important;
+    width: 9cm !important;
+    height: 19cm !important;
     box-shadow: none !important;
     border: none !important;
     border-radius: 0 !important;
@@ -104,4 +187,3 @@
     print-color-adjust: exact;
   }
 }
-

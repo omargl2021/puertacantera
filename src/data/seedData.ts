@@ -3,8 +3,7 @@ import type { PortalDatabase } from '../types/portal';
 export const OFFICIAL_LOGO_URL =
   '/assets/aistudio/Gemini_Generated_Image_ipguhipguhipguhi_5afe4319.jpg';
 
-export const ENTRY_PASS_TEMPLATE_URL =
-  '/assets/aistudio/Gemini_Generated_Image_i9rcvai9rcvai9rc_1054d6c6.jpg';
+export const ENTRY_PASS_TEMPLATE_URL = '/assets/aistudio/acceso_15ac1a26.png';
 
 export const SEED_DATABASE: PortalDatabase = {
   houses: [
@@ -20,23 +19,25 @@ export const SEED_DATABASE: PortalDatabase = {
   users: [
     {
       id: 'usr-admin',
+      residentKey: 'RES001',
       name: 'Admin',
       email: 'admin@puertacantera.com',
       role: 'admin',
       houseId: null,
       active: true,
-      qrCode: 'PC-USR-100001',
+      qrCode: 'PC-A1-100001',
       carCount: 1,
       vehicleQrCodes: [{ index: 1, label: 'Auto 1', code: 'PC-A1-100001' }],
     },
     {
       id: 'd1f075f4-52c5-45a8-a397-7eebac71f55c',
+      residentKey: 'RES002',
       name: 'Daniel Cruz',
       email: 'daniel@appmrl.mx',
       role: 'admin',
       houseId: '2c1c8762-4128-41eb-9df8-1cf5c4d31506',
       active: true,
-      qrCode: 'PC-USR-389001',
+      qrCode: 'PC-A1-389001',
       carCount: 2,
       vehicleQrCodes: [
         { index: 1, label: 'Auto 1', code: 'PC-A1-389001' },

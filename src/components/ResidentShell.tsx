@@ -17,14 +17,14 @@ const NAV_ITEMS: Array<{ route: AppRoute; label: string; icon: typeof Home }> = 
 
 export function ResidentShell({ currentRoute, onNavigate, children }: ResidentShellProps) {
   return (
-    <div className="min-h-dvh bg-sand pb-[calc(68px+env(safe-area-inset-bottom))]">
-      <div className="mx-auto max-w-lg">{children}</div>
+    <div className="min-h-dvh bg-sand pb-[calc(74px+env(safe-area-inset-bottom))]">
+      <div className="mx-auto w-full max-w-lg md:max-w-3xl lg:max-w-5xl">{children}</div>
 
       <nav
         aria-label="Principal"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white pb-[env(safe-area-inset-bottom)]"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-6px_24px_rgba(23,20,17,0.06)] backdrop-blur-md"
       >
-        <div className="mx-auto grid h-[68px] max-w-lg grid-cols-4">
+        <div className="mx-auto grid h-[68px] max-w-lg grid-cols-4 md:max-w-3xl lg:max-w-5xl">
           {NAV_ITEMS.map(({ route, label, icon: Icon }) => {
             const active =
               currentRoute === route || (route === '/' && currentRoute === '/avisos');
@@ -34,12 +34,20 @@ export function ResidentShell({ currentRoute, onNavigate, children }: ResidentSh
                 type="button"
                 onClick={() => onNavigate(route)}
                 aria-current={active ? 'page' : undefined}
-                className={`flex flex-col items-center justify-center gap-1 text-xs transition-colors ${
-                  active ? 'font-semibold text-cantera' : 'font-medium text-stone hover:text-ink'
+                className={`relative flex flex-col items-center justify-center gap-1 text-xs transition-colors ${
+                  active
+                    ? 'font-semibold text-cantera'
+                    : 'font-medium text-stone hover:text-ink'
                 }`}
               >
-                <Icon className="size-[22px]" strokeWidth={active ? 2.2 : 1.8} />
-                {label}
+                {active && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-0 h-[2.5px] w-10 rounded-b-full bg-gold"
+                  />
+                )}
+                <Icon className="size-[21px]" strokeWidth={active ? 2.2 : 1.75} />
+                <span className="whitespace-nowrap">{label}</span>
               </button>
             );
           })}

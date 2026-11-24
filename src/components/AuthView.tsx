@@ -54,13 +54,19 @@ export function AuthView({
   };
 
   return (
-    <div className="flex min-h-dvh flex-col bg-night">
-      <div className="flex flex-col items-center gap-2.5 px-6 pt-[max(env(safe-area-inset-top),2.5rem)] pb-14">
-        <BrandMark variant="light" width={160} />
-        <p className="text-sm text-night-muted">Portal vecinal</p>
+    <div className="flex min-h-dvh flex-col bg-gradient-to-b from-[#1C1813] via-night to-[#14110E] sm:items-center sm:justify-center sm:px-6 sm:py-10">
+      <div className="flex flex-col items-center gap-3 px-6 pt-[max(env(safe-area-inset-top),2.75rem)] pb-14 sm:pt-0 sm:pb-7">
+        <BrandMark variant="light" width={168} />
+        <div className="flex items-center gap-3">
+          <span aria-hidden="true" className="h-px w-8 bg-gold/45" />
+          <p className="text-xs font-medium tracking-[0.2em] text-gold-light/90 uppercase">
+            Portal vecinal
+          </p>
+          <span aria-hidden="true" className="h-px w-8 bg-gold/45" />
+        </div>
       </div>
 
-      <main className="-mt-8 flex flex-1 flex-col rounded-t-[28px] bg-sand px-5 pt-7 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
+      <main className="-mt-8 flex flex-1 flex-col rounded-t-[28px] border-t border-gold/30 bg-sand px-5 pt-8 pb-[max(env(safe-area-inset-bottom),1.75rem)] sm:mt-0 sm:w-full sm:max-w-[440px] sm:flex-none sm:rounded-[28px] sm:border sm:border-gold/25 sm:px-8 sm:py-8 sm:shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
         <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-between gap-6">
           {mode === 'login' ? (
             <div className="flex flex-col gap-5">
@@ -86,7 +92,7 @@ export function AuthView({
                       if (error) setError(null);
                     }}
                     placeholder="nombre@correo.com"
-                    className="h-12 w-full min-w-0 rounded-[10px] border border-input bg-white px-3 py-1 text-base font-medium text-ink transition-colors outline-none placeholder:text-stone/60 focus-visible:border-cantera focus-visible:ring-3 focus-visible:ring-cantera/20"
+                    className="h-12 w-full min-w-0 rounded-xl border border-input bg-white px-3.5 py-1 text-base font-medium text-ink transition-colors outline-none placeholder:text-stone/60 focus-visible:border-cantera focus-visible:ring-3 focus-visible:ring-gold/25"
                   />
                 </div>
 
@@ -105,13 +111,13 @@ export function AuthView({
                         if (error) setError(null);
                       }}
                       placeholder="Tu contraseña"
-                      className="h-12 w-full min-w-0 rounded-[10px] border border-input bg-white px-3 pr-11 py-1 text-base font-medium text-ink transition-colors outline-none placeholder:text-stone/60 focus-visible:border-cantera focus-visible:ring-3 focus-visible:ring-cantera/20"
+                      className="h-12 w-full min-w-0 rounded-xl border border-input bg-white px-3.5 pr-11 py-1 text-base font-medium text-ink transition-colors outline-none placeholder:text-stone/60 focus-visible:border-cantera focus-visible:ring-3 focus-visible:ring-gold/25"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword((prev) => !prev)}
                       aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                      className="absolute top-1/2 right-2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg text-stone hover:bg-sand-2 hover:text-ink"
+                      className="absolute top-1/2 right-2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg text-stone transition-colors hover:bg-sand-2 hover:text-ink"
                     >
                       {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                     </button>
@@ -126,13 +132,13 @@ export function AuthView({
 
                 <button
                   type="submit"
-                  className="mt-1 inline-flex h-12 w-full items-center justify-center rounded-xl bg-cantera px-4 text-base font-semibold text-white transition-all hover:bg-cantera-dark active:translate-y-px"
+                  className="mt-1 inline-flex h-12 w-full items-center justify-center rounded-xl bg-cantera px-4 text-base font-semibold text-white shadow-[0_6px_16px_rgba(138,100,27,0.22)] transition-all hover:bg-cantera-dark active:translate-y-px"
                 >
                   Entrar
                 </button>
               </form>
 
-              <div className="flex flex-col items-center gap-3">
+              <div className="flex flex-col items-center gap-3.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -145,15 +151,15 @@ export function AuthView({
                   Olvidé mi contraseña
                 </button>
 
-                <div className="w-full rounded-[14px] border border-line bg-white/80 p-3">
-                  <p className="mb-2 text-xs font-semibold tracking-[0.06em] text-stone uppercase">
+                <div className="w-full rounded-2xl border border-line bg-white/85 p-3.5">
+                  <p className="mb-2.5 text-[11px] font-semibold tracking-[0.1em] text-stone uppercase">
                     Acceso rápido
                   </p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2.5">
                     <button
                       type="button"
                       onClick={() => onLogin('admin@puertacantera.com')}
-                      className="flex flex-col items-start rounded-[10px] border border-chip-line bg-white px-3 py-2 text-left transition-colors hover:bg-sand-2"
+                      className="flex flex-col items-start rounded-xl border border-line bg-sand/50 px-3 py-2.5 text-left transition-colors hover:border-gold/50 hover:bg-cantera-soft/60"
                     >
                       <span className="text-sm font-semibold text-ink">Admin</span>
                       <span className="text-xs text-stone">Mesa directiva</span>
@@ -161,7 +167,7 @@ export function AuthView({
                     <button
                       type="button"
                       onClick={() => onLogin('daniel@appmrl.mx')}
-                      className="flex flex-col items-start rounded-[10px] border border-chip-line bg-white px-3 py-2 text-left transition-colors hover:bg-sand-2"
+                      className="flex flex-col items-start rounded-xl border border-line bg-sand/50 px-3 py-2.5 text-left transition-colors hover:border-gold/50 hover:bg-cantera-soft/60"
                     >
                       <span className="text-sm font-semibold text-ink">Daniel Cruz</span>
                       <span className="text-xs text-stone">Flores #389</span>
@@ -193,7 +199,7 @@ export function AuthView({
               </div>
 
               {recoverySent ? (
-                <div className="flex flex-col gap-3 rounded-[18px] border border-line bg-white p-5">
+                <div className="flex flex-col gap-3 rounded-2xl border border-line bg-white p-5">
                   <div className="flex items-center gap-2 text-ok">
                     <CheckCircle2 className="size-5 shrink-0" />
                     <span className="font-semibold">Enlace enviado</span>
@@ -227,7 +233,7 @@ export function AuthView({
                         if (error) setError(null);
                       }}
                       placeholder="nombre@correo.com"
-                      className="h-12 w-full min-w-0 rounded-[10px] border border-input bg-white px-3 py-1 text-base font-medium text-ink transition-colors outline-none placeholder:text-stone/60 focus-visible:border-cantera focus-visible:ring-3 focus-visible:ring-cantera/20"
+                      className="h-12 w-full min-w-0 rounded-xl border border-input bg-white px-3.5 py-1 text-base font-medium text-ink transition-colors outline-none placeholder:text-stone/60 focus-visible:border-cantera focus-visible:ring-3 focus-visible:ring-gold/25"
                     />
                   </div>
                   {error && (
@@ -237,7 +243,7 @@ export function AuthView({
                   )}
                   <button
                     type="submit"
-                    className="inline-flex h-12 w-full items-center justify-center rounded-xl bg-cantera px-4 text-base font-semibold text-white transition-all hover:bg-cantera-dark active:translate-y-px"
+                    className="inline-flex h-12 w-full items-center justify-center rounded-xl bg-cantera px-4 text-base font-semibold text-white shadow-[0_6px_16px_rgba(138,100,27,0.22)] transition-all hover:bg-cantera-dark active:translate-y-px"
                   >
                     Enviar enlace
                   </button>
@@ -250,7 +256,7 @@ export function AuthView({
             <button
               type="button"
               onClick={onOpenPrivacy}
-              className="text-sm text-stone underline-offset-4 hover:text-ink hover:underline"
+              className="text-sm text-stone underline-offset-4 hover:text-cantera hover:underline"
             >
               Aviso de privacidad
             </button>

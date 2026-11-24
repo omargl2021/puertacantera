@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { Bell, BellOff, Car, ChevronLeft, Download, LogOut, QrCode, Shield, Users } from 'lucide-react';
-import type { AppRoute, PortalDatabase, PortalUser } from '../types/portal';
-import { formatHouseLabel, ROLE_LABELS } from '../utils/portalLogic';
+import type { AppRoute, PortalDatabase, PortalUser, ScannedResidentData } from '../types/portal';
+import {
+  buildVehicleScanUrl,
+  createScannedResidentData,
+  formatHouseLabel,
+  formatVehicleSummary,
+  ROLE_LABELS,
+} from '../utils/portalLogic';
 import { EntryPassModal } from './EntryPassModal';
 import { QrCodeSvg } from './QrCodeSvg';
 
@@ -12,6 +18,7 @@ interface ResidentAccountProps {
   onTogglePush: () => void;
   onInstallApp: () => void;
   onSwitchUser: (userId: string) => void;
+  onScanQr: (data: ScannedResidentData) => void;
   onNotify: (message: string) => void;
   onLogout: () => void;
 }
@@ -23,11 +30,13 @@ export function ResidentAccount({
   onTogglePush,
   onInstallApp,
   onSwitchUser,
+  onScanQr,
   onNotify,
   onLogout,
 }: ResidentAccountProps) {
   const [showEntryPass, setShowEntryPass] = useState(false);
   const house = user.houseId ? db.houses.find((h) => h.id === user.houseId) ?? null : null;
+  const firstVehicle = user.vehicleQrCodes[0] ?? null;
 
   return (
     <div>
@@ -49,23 +58,46 @@ export function ResidentAccount({
 
       <div className="flex flex-col gap-4 px-4 pb-8">
         <section className="flex flex-col gap-1 rounded-[18px] border border-line bg-white p-[18px]">
-          <span className="text-lg font-semibold text-ink">{user.name}</span>
-          <span className="text-sm text-stone">{user.email}</span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-md bg-night px-2 py-0.5 font-mono text-xs font-semibold text-gold-light">
+              {user.residentKey}
+            </span>
+            <span className="text-lg font-semibold text-ink">{user.name}</span>
+          </div>
+          <span className="text-sm text-stone">
+            {user.email}
+            {user.phone ? ` · Tel. ${user.phone}` : ''}
+          </span>
           <span className="text-sm text-stone">
             {ROLE_LABELS[user.role]}
             {house ? ` · ${formatHouseLabel(house)}` : ''}
           </span>
         </section>
 
-        {/* Personal & Vehicle QR Card + Entry Pass button */}
+        {/* Vehicle QR Card (1 per car with titular data) + Entry Pass button */}
         <section className="flex flex-col gap-3.5 rounded-[18px] border border-line bg-white p-[18px]">
           <div className="flex items-center gap-3">
-            <div className="shrink-0 rounded-xl border border-line bg-sand p-1.5">
-              <QrCodeSvg code={user.qrCode} size={58} />
-            </div>
+            {firstVehicle && (
+              <button
+                type="button"
+                onClick={() => onScanQr(createScannedResidentData(user, firstVehicle, house))}
+                aria-label="Escanear código QR vehicular"
+                className="shrink-0 rounded-xl border border-line bg-sand p-1.5 transition-transform hover:scale-105"
+              >
+                <QrCodeSvg code={buildVehicleScanUrl(user, firstVehicle, house)} size={58} />
+              </button>
+            )}
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="font-semibold text-ink">Mi código QR y autos</span>
-              <span className="font-mono text-xs text-stone">{user.qrCode}</span>
+              <span className="font-semibold text-ink">Códigos QR por automóvil</span>
+              <span className="text-xs text-ink-soft">Titular: {user.name}</span>
+              {firstVehicle && (
+                <span className="font-mono text-xs text-stone">
+                  {firstVehicle.code}
+                  {formatVehicleSummary(firstVehicle)
+                    ? ` · ${formatVehicleSummary(firstVehicle)}`
+                    : ''}
+                </span>
+              )}
               <span className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-ink-soft">
                 <Car className="size-3.5 text-cantera" />
                 {user.carCount} {user.carCount === 1 ? 'auto' : 'autos'} ·{' '}
@@ -74,14 +106,16 @@ export function ResidentAccount({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowEntryPass(true)}
-            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-cantera px-4 text-base font-semibold text-white transition-all hover:bg-cantera-dark active:translate-y-px"
-          >
-            <QrCode className="size-4" />
-            Generar pase de entrada
-          </button>
+          {user.vehicleQrCodes.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowEntryPass(true)}
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-cantera px-4 text-base font-semibold text-white transition-all hover:bg-cantera-dark active:translate-y-px"
+            >
+              <QrCode className="size-4" />
+              Generar pase de entrada
+            </button>
+          )}
         </section>
 
         <section className="flex flex-col gap-4 rounded-[18px] border border-line bg-white p-[18px]">
@@ -196,6 +230,7 @@ export function ResidentAccount({
           house={house}
           onClose={() => setShowEntryPass(false)}
           onNotify={onNotify}
+          onScanQr={onScanQr}
         />
       )}
     </div>

@@ -10,6 +10,7 @@ export type AppRoute =
   | '/reportes'
   | '/avisos'
   | '/cuenta'
+  | '/corbatines'
   | '/admin/tesoreria'
   | '/admin/tesoreria/casas'
   | '/admin/tesoreria/cuotas'
@@ -17,12 +18,22 @@ export type AppRoute =
   | '/admin/reportes'
   | '/admin/visitas'
   | '/admin/padron'
+  | '/admin/corbatines'
   | '/admin/bitacora';
+
+export interface VehicleDetailsInput {
+  plate?: string;
+  color?: string;
+  model?: string;
+}
 
 export interface VehicleQrCode {
   index: number;
   label: string;
   code: string;
+  plate?: string;
+  color?: string;
+  model?: string;
 }
 
 export interface House {
@@ -36,6 +47,7 @@ export interface House {
 
 export interface PortalUser {
   id: string;
+  residentKey: string;
   name: string;
   email: string;
   role: UserRole;
@@ -49,8 +61,10 @@ export interface PortalUser {
 
 export interface Invitation {
   id: string;
+  residentKey: string;
   email: string;
   name?: string;
+  phone?: string;
   role: UserRole;
   houseId: string | null;
   carCount: number;
@@ -86,6 +100,9 @@ export interface PaymentRecord {
   approvedAmountMxn?: number;
   method: 'Transferencia SPEI' | 'Depósito bancario' | 'Efectivo';
   reference: string;
+  receiptImageUrl?: string;
+  receiptFileName?: string;
+  receiptFileSizeBytes?: number;
   notes?: string;
   reviewNote?: string;
   status: PaymentStatus;
@@ -172,6 +189,29 @@ export interface AuditLogEntry {
   timestampLabel: string;
   beforeSummary?: string;
   afterSummary?: string;
+}
+
+export interface ScannedResidentData {
+  code: string;
+  residentKey: string;
+  name: string;
+  email: string;
+  phone?: string;
+  role: UserRole;
+  houseLabel: string;
+  active: boolean;
+  vehicleLabel: string;
+  plate?: string;
+  model?: string;
+  color?: string;
+  qrValue: string;
+}
+
+export interface CorbatinItem {
+  id: string;
+  user: PortalUser;
+  house: House | null;
+  vehicle: VehicleQrCode;
 }
 
 export interface PortalDatabase {
