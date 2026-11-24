@@ -84,30 +84,17 @@ async function startServer() {
     }
 
     const configuredAdminUser = (process.env.ADMIN_USERNAME || DEFAULT_ADMIN_USERNAME).trim();
-    if (rawUsername.toUpperCase() === configuredAdminUser.toUpperCase()) {
-      if (!verifyAdminCredentials(rawUsername, rawPassword)) {
-        res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos.' });
-        return;
-      }
-      const token = issueSessionToken(configuredAdminUser, 'admin');
-      res.json({
-        ok: true,
-        isAdmin: true,
-        username: configuredAdminUser,
-        role: 'admin',
-        token,
-      });
+    if (!verifyAdminCredentials(rawUsername, rawPassword)) {
+      res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos.' });
       return;
     }
 
-    // Non-admin resident sign-in validated against resident directory on client/Firestore;
-    // issue a non-privileged resident bearer token (never admin).
-    const token = issueSessionToken(rawUsername.toLowerCase(), 'resident');
+    const token = issueSessionToken(configuredAdminUser, 'admin');
     res.json({
       ok: true,
-      isAdmin: false,
-      username: rawUsername,
-      role: 'resident',
+      isAdmin: true,
+      username: configuredAdminUser,
+      role: 'admin',
       token,
     });
   });

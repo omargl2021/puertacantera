@@ -81,12 +81,15 @@ export function AuthView({ onLogin, onOpenPrivacy }: AuthViewProps) {
                     name="username"
                     type="text"
                     autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={username}
                     onChange={(e) => {
                       setUsername(e.target.value);
                       if (error) setError(null);
                     }}
-                    placeholder="Usuario o clave de residente"
+                    placeholder="Ingresa tu usuario"
                     className="h-12 w-full min-w-0 rounded-xl border border-input bg-white pr-3.5 pl-10 text-base font-medium text-ink transition-colors outline-none placeholder:text-stone/60 focus-visible:border-cantera focus-visible:ring-3 focus-visible:ring-gold/25"
                   />
                 </div>
@@ -103,6 +106,9 @@ export function AuthView({ onLogin, onOpenPrivacy }: AuthViewProps) {
                     name="password"
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value);

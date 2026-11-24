@@ -47,7 +47,6 @@ import {
   DEFAULT_NOW_ISO,
   deleteNotice,
   deleteResident,
-  findUserByIdentifier,
   importResidentsBatch,
   inviteUser,
   isAdminUser,
@@ -256,6 +255,13 @@ export default function App() {
         body: JSON.stringify({ username, password }),
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+
+      if (response.status === 404 || response.status === 405 || !isJson) {
+        return 'No se encontró el servidor de autenticación. Abre la aplicación desde su servidor activo (npm start).';
+      }
+
       const data = (await response.json().catch(() => ({}))) as {
         ok?: boolean;
         isAdmin?: boolean;
@@ -263,41 +269,22 @@ export default function App() {
         error?: string;
       };
 
-      if (!response.ok || !data.ok || !data.token) {
+      if (!response.ok || !data.ok || !data.isAdmin || !data.token) {
         return data.error || 'Usuario o contraseña incorrectos.';
       }
 
-      if (data.isAdmin) {
-        const adminUser =
-          dbRef.current.users.find((u) => isPrimaryAdminUser(u)) ??
-          dbRef.current.users.find((u) => u.role === 'admin');
-        if (!adminUser) {
-          return 'No se encontró la cuenta del administrador.';
-        }
-        setAuthToken(data.token);
-        setCurrentUserId(adminUser.id);
-        setPrevRoute('/login');
-        setRoute('/');
-        showToast('Bienvenido administrador (ADMON).');
-        return null;
-      }
-
-      const matched = findUserByIdentifier(dbRef.current.users, username);
-      if (!matched) {
-        return 'Usuario no registrado en el padrón. Solicita tu alta al administrador.';
-      }
-      if (isPrimaryAdminUser(matched)) {
-        return 'Para ingresar como administrador usa el usuario ADMON.';
-      }
-      if (!matched.active) {
-        return 'Tu cuenta está inactiva. Contacta a la administración.';
+      const adminUser =
+        dbRef.current.users.find((u) => isPrimaryAdminUser(u)) ??
+        dbRef.current.users.find((u) => u.role === 'admin');
+      if (!adminUser) {
+        return 'No se encontró la cuenta del administrador.';
       }
 
       setAuthToken(data.token);
-      setCurrentUserId(matched.id);
+      setCurrentUserId(adminUser.id);
       setPrevRoute('/login');
       setRoute('/');
-      showToast(`Bienvenido residente, ${matched.name}.`);
+      showToast('Bienvenido administrador (ADMON).');
       return null;
     } catch {
       return 'No se pudo verificar el acceso con el servidor.';
