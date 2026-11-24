@@ -1,0 +1,157 @@
+import { useState, type ReactNode } from 'react';
+import { ArrowLeft, Menu, X } from 'lucide-react';
+import type { AppRoute } from '../types/portal';
+import { BrandMark } from './BrandMark';
+
+interface AdminShellProps {
+  currentRoute: AppRoute;
+  pendingPaymentsCount: number;
+  onNavigate: (route: AppRoute) => void;
+  children: ReactNode;
+}
+
+interface NavSection {
+  title: string;
+  items: Array<{ route: AppRoute; label: string; badge?: number }>;
+}
+
+export function AdminShell({
+  currentRoute,
+  pendingPaymentsCount,
+  onNavigate,
+  children,
+}: AdminShellProps) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const sections: NavSection[] = [
+    {
+      title: 'Tesorería',
+      items: [
+        { route: '/admin/tesoreria', label: 'Pagos por validar', badge: pendingPaymentsCount },
+        { route: '/admin/tesoreria/casas', label: 'Estado por casa' },
+        { route: '/admin/tesoreria/cuotas', label: 'Cuotas' },
+      ],
+    },
+    {
+      title: 'Comunidad',
+      items: [
+        { route: '/admin/avisos', label: 'Avisos' },
+        { route: '/admin/reportes', label: 'Reportes' },
+        { route: '/admin/visitas', label: 'Bitácora de visitas' },
+        { route: '/admin/padron', label: 'Vecinos y casas' },
+      ],
+    },
+    {
+      title: 'Control',
+      items: [{ route: '/admin/bitacora', label: 'Bitácora de cambios' }],
+    },
+  ];
+
+  const handleLinkClick = (route: AppRoute) => {
+    setMobileOpen(false);
+    onNavigate(route);
+  };
+
+  const renderNav = () => (
+    <nav aria-label="Administración" className="flex flex-col gap-1">
+      {sections.map((section, idx) => (
+        <div key={section.title} className="flex flex-col gap-1">
+          <span
+            className={`px-3 pb-1.5 text-xs font-semibold tracking-[0.12em] text-night-label uppercase ${
+              idx > 0 ? 'pt-[18px]' : ''
+            }`}
+          >
+            {section.title}
+          </span>
+          {section.items.map((item) => {
+            const active = currentRoute === item.route;
+            return (
+              <button
+                key={item.route}
+                type="button"
+                aria-current={active ? 'page' : undefined}
+                onClick={() => handleLinkClick(item.route)}
+                className={`flex min-h-11 w-full items-center justify-between rounded-[10px] px-3 text-left text-[15px] transition-colors ${
+                  active
+                    ? 'bg-night-2 font-semibold text-white'
+                    : 'text-night-text hover:bg-white/5'
+                }`}
+              >
+                <span>{item.label}</span>
+                {typeof item.badge === 'number' && item.badge > 0 && (
+                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-cantera px-1.5 py-0.5 text-xs font-semibold text-white tabular-nums">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={() => handleLinkClick('/')}
+        className="mt-6 flex min-h-11 w-full items-center gap-2 rounded-[10px] px-3 text-left text-[15px] text-night-muted transition-colors hover:bg-white/5 hover:text-white"
+      >
+        <ArrowLeft className="size-4" />
+        Volver a la app
+      </button>
+    </nav>
+  );
+
+  return (
+    <div className="flex min-h-dvh bg-sand">
+      {/* Desktop Sidebar */}
+      <aside className="sticky top-0 hidden h-dvh w-[248px] shrink-0 flex-col gap-7 overflow-y-auto bg-night px-4 py-7 lg:flex">
+        <BrandMark variant="light" width={150} className="ml-2" />
+        {renderNav()}
+      </aside>
+
+      {/* Main Column */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile Top Bar */}
+        <div className="sticky top-0 z-30 flex items-center justify-between bg-night px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-3 lg:hidden">
+          <BrandMark variant="light" width={104} />
+          <button
+            type="button"
+            aria-label={mobileOpen ? 'Cerrar menú' : 'Abrir menú'}
+            onClick={() => setMobileOpen((prev) => !prev)}
+            className="flex size-11 items-center justify-center rounded-full border border-night-line text-night-text hover:bg-white/5"
+          >
+            {mobileOpen ? <X className="size-5" /> : <Menu className="size-5" />}
+          </button>
+        </div>
+
+        {/* Mobile Drawer */}
+        {mobileOpen && (
+          <div className="fixed inset-0 z-40 flex lg:hidden">
+            <div
+              className="fixed inset-0 bg-black/50"
+              onClick={() => setMobileOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 flex h-full w-[264px] max-w-[85vw] flex-col gap-6 overflow-y-auto bg-night px-4 py-6">
+              <div className="flex items-center justify-between pl-2">
+                <BrandMark variant="light" width={132} />
+                <button
+                  type="button"
+                  aria-label="Cerrar menú"
+                  onClick={() => setMobileOpen(false)}
+                  className="flex size-10 items-center justify-center rounded-full text-night-muted hover:bg-white/10 hover:text-white"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+              {renderNav()}
+            </div>
+          </div>
+        )}
+
+        <main className="flex flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}

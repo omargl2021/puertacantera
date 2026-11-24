@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@theme {
+  --color-night: #2B2724;
+  --color-night-2: #3A3531;
+  --color-night-line: #46403B;
+  --color-night-text: #EAE4DC;
+  --color-night-muted: #B6ACA2;
+  --color-night-label: #91877D;
+
+  --color-sand: #F6F2EC;
+  --color-sand-2: #EFEAE1;
+  --color-line: #E5DFD5;
+  --color-chip-line: #DBD3C7;
+  --color-input: #D8D0C4;
+
+  --color-ink: #23201D;
+  --color-ink-soft: #48423C;
+  --color-stone: #736B63;
+
+  --color-primary: #7A4A2E;
+  --color-cantera: #7A4A2E;
+  --color-cantera-dark: #633B24;
+  --color-cantera-soft: #F3E8E1;
+
+  --color-ok: #2D6A4F;
+  --color-ok-bg: #E6F4EC;
+  --color-warn: #9A5B13;
+  --color-warn-bg: #FDF2E2;
+  --color-bad: #8A2E1F;
+  --color-bad-bg: #FAE8E5;
+  --color-info: #2B5B84;
+  --color-info-bg: #E8F1F8;
+
+  --font-heading: "Fraunces", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background-color: var(--color-sand);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  h1, h2, h3, .font-heading {
+    font-family: var(--font-heading);
+    text-wrap: balance;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-cantera);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@media print {
+  @page {
+    size: 7cm 10cm;
+    margin: 0;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .entry-pass-print-target,
+  .entry-pass-print-target * {
+    visibility: visible;
+  }
+
+  .entry-pass-print-target {
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    width: 7cm !important;
+    height: 10cm !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+

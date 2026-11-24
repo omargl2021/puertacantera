@@ -1,0 +1,6 @@
+{
+  "name": "Puerta Cantera",
+  "description": "Portal vecinal de Puerta Cantera Residencial: cuotas, avisos, reportes y visitas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
