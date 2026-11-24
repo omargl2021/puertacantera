@@ -2,7 +2,6 @@ export type UserRole = 'resident' | 'treasurer' | 'admin' | 'guard';
 
 export type AppRoute =
   | '/login'
-  | '/recuperar'
   | '/privacidad'
   | '/'
   | '/pagos'
@@ -48,6 +47,7 @@ export interface House {
 export interface PortalUser {
   id: string;
   residentKey: string;
+  username?: string;
   name: string;
   email: string;
   role: UserRole;

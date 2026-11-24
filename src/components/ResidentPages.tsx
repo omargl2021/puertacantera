@@ -47,17 +47,17 @@ interface ResidentPageHeaderProps {
 
 function ResidentPageHeader({ title, onBack }: ResidentPageHeaderProps) {
   return (
-    <header className="flex flex-col gap-2 px-4 pt-[max(env(safe-area-inset-top),2.5rem)] pb-3">
+    <header className="flex flex-col gap-2 px-4 pt-[max(env(safe-area-inset-top),2.25rem)] pb-3 md:px-6 lg:px-8">
       <div className="flex items-center gap-1">
         <button
           type="button"
           aria-label="Volver"
           onClick={onBack}
-          className="-ml-2 flex size-11 items-center justify-center rounded-full text-ink hover:bg-white/60"
+          className="-ml-2 flex size-11 items-center justify-center rounded-full text-ink hover:bg-white/60 lg:hidden"
         >
           <ChevronLeft className="size-6" />
         </button>
-        <h1 className="flex-1 font-heading text-[28px] leading-tight font-semibold text-ink">
+        <h1 className="flex-1 font-heading text-[28px] leading-tight font-semibold text-ink sm:text-[32px]">
           {title}
         </h1>
       </div>
@@ -65,29 +65,14 @@ function ResidentPageHeader({ title, onBack }: ResidentPageHeaderProps) {
   );
 }
 
-function NoHouseAssignedCard({
-  canSwitchToHouseUser,
-  onSwitchToHouseUser,
-}: {
-  canSwitchToHouseUser: boolean;
-  onSwitchToHouseUser: () => void;
-}) {
+function NoHouseAssignedCard() {
   return (
-    <div className="px-4">
+    <div className="px-4 md:px-6 lg:px-8">
       <div className="flex flex-col items-center gap-1 rounded-2xl border border-dashed border-chip-line bg-white/60 px-4 py-8 text-center">
         <p className="font-semibold text-ink">Sin casa asignada</p>
         <p className="text-sm text-stone">
-          Pide a la mesa directiva que ligue tu usuario a tu casa.
+          Pide a la administración que ligue tu usuario a tu casa.
         </p>
-        {canSwitchToHouseUser && (
-          <button
-            type="button"
-            onClick={onSwitchToHouseUser}
-            className="mt-3 inline-flex h-10 items-center justify-center rounded-xl border border-chip-line bg-white px-3.5 text-sm font-semibold text-cantera hover:bg-sand-2"
-          >
-            Usar perfil de Daniel Cruz (De Las Flores #389)
-          </button>
-        )}
       </div>
     </div>
   );
@@ -100,7 +85,6 @@ interface ResidentPaymentsProps {
   user: PortalUser;
   onNavigate: (route: AppRoute) => void;
   onSubmitPayment: (input: SubmitPaymentInput) => string | null;
-  onSwitchToHouseUser: () => void;
 }
 
 export function ResidentPayments({
@@ -108,7 +92,6 @@ export function ResidentPayments({
   user,
   onNavigate,
   onSubmitPayment,
-  onSwitchToHouseUser,
 }: ResidentPaymentsProps) {
   const house = user.houseId ? db.houses.find((h) => h.id === user.houseId) ?? null : null;
   const fee = getCurrentFeeSchedule(db.feeHistory);
@@ -138,10 +121,7 @@ export function ResidentPayments({
     return (
       <div>
         <ResidentPageHeader title="Pagos" onBack={() => onNavigate('/')} />
-        <NoHouseAssignedCard
-          canSwitchToHouseUser={db.users.some((u) => u.houseId !== null)}
-          onSwitchToHouseUser={onSwitchToHouseUser}
-        />
+        <NoHouseAssignedCard />
       </div>
     );
   }
@@ -248,7 +228,7 @@ export function ResidentPayments({
     <div>
       <ResidentPageHeader title="Pagos" onBack={() => onNavigate('/')} />
 
-      <div className="flex flex-col gap-4 px-4 pb-8">
+      <div className="flex flex-col gap-4 px-4 pb-8 md:px-6 lg:px-8">
         <section className="flex flex-col gap-2 rounded-[18px] border border-line bg-white p-[18px]">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -539,7 +519,6 @@ interface ResidentVisitsProps {
   onCancelPass: (passId: string) => void;
   onCheckInPass: (passId: string) => void;
   onCopyCode: (code: string) => void;
-  onSwitchToHouseUser: () => void;
 }
 
 export function ResidentVisits({
@@ -550,7 +529,6 @@ export function ResidentVisits({
   onCancelPass,
   onCheckInPass,
   onCopyCode,
-  onSwitchToHouseUser,
 }: ResidentVisitsProps) {
   const house = user.houseId ? db.houses.find((h) => h.id === user.houseId) ?? null : null;
   const [visitorName, setVisitorName] = useState('');
@@ -568,10 +546,7 @@ export function ResidentVisits({
     return (
       <div>
         <ResidentPageHeader title="Nueva visita" onBack={() => onNavigate('/')} />
-        <NoHouseAssignedCard
-          canSwitchToHouseUser={db.users.some((u) => u.houseId !== null)}
-          onSwitchToHouseUser={onSwitchToHouseUser}
-        />
+        <NoHouseAssignedCard />
       </div>
     );
   }
@@ -608,7 +583,7 @@ export function ResidentVisits({
     <div>
       <ResidentPageHeader title="Nueva visita" onBack={() => onNavigate('/')} />
 
-      <div className="flex flex-col gap-5 px-4 pb-8">
+      <div className="flex flex-col gap-5 px-4 pb-8 md:px-6 lg:px-8">
         <form
           onSubmit={handleSubmit}
           className="flex flex-col gap-3.5 rounded-[18px] border border-line bg-white p-[18px]"
@@ -875,9 +850,12 @@ export function ResidentReports({
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const visibleReports = user.houseId
-    ? db.reports.filter((r) => r.houseId === user.houseId || user.role === 'admin')
-    : db.reports;
+  const visibleReports =
+    user.role === 'admin'
+      ? db.reports
+      : user.houseId
+        ? db.reports.filter((r) => r.houseId === user.houseId)
+        : [];
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -895,17 +873,17 @@ export function ResidentReports({
 
   return (
     <div>
-      <header className="flex flex-col gap-2 px-4 pt-[max(env(safe-area-inset-top),2.5rem)] pb-3">
+      <header className="flex flex-col gap-2 px-4 pt-[max(env(safe-area-inset-top),2.25rem)] pb-3 md:px-6 lg:px-8">
         <div className="flex items-center gap-1">
           <button
             type="button"
             aria-label="Volver"
             onClick={() => onNavigate('/')}
-            className="-ml-2 flex size-11 items-center justify-center rounded-full text-ink hover:bg-white/60"
+            className="-ml-2 flex size-11 items-center justify-center rounded-full text-ink hover:bg-white/60 lg:hidden"
           >
             <ChevronLeft className="size-6" />
           </button>
-          <h1 className="flex-1 font-heading text-[28px] leading-tight font-semibold text-ink">
+          <h1 className="flex-1 font-heading text-[28px] leading-tight font-semibold text-ink sm:text-[32px]">
             Reportes
           </h1>
           <button
@@ -919,7 +897,7 @@ export function ResidentReports({
         </div>
       </header>
 
-      <div className="flex flex-col gap-4 px-4 pb-8">
+      <div className="flex flex-col gap-4 px-4 pb-8 md:px-6 lg:px-8">
         {showForm && (
           <form
             onSubmit={handleSubmit}
@@ -1091,7 +1069,7 @@ export function ResidentNotices({ db, onNavigate }: ResidentNoticesProps) {
     <div>
       <ResidentPageHeader title="Avisos" onBack={() => onNavigate('/')} />
 
-      <div className="flex flex-col gap-4 px-4 pb-8">
+      <div className="flex flex-col gap-4 px-4 pb-8 md:px-6 lg:px-8">
         <div role="radiogroup" className="scrollbar-none flex gap-2 overflow-x-auto pb-1">
           {(['all', 'administracion', 'mantenimiento', 'seguridad', 'eventos'] as const).map(
             (val) => {

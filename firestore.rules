@@ -1,0 +1,431 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== GLOBAL PRIMITIVES ====================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrapAdmin() {
+      return isVerified() && request.auth.token.email == 'omargarcialeal@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin()
+        || (isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isValidOptionalString(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidOptionalNumber(data, field, minVal, maxVal) {
+      return !(field in data)
+        || (data[field] is number && data[field] >= minVal && data[field] <= maxVal);
+    }
+
+    // ==================== VALIDATION BLUEPRINTS ====================
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'username', 'active', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'username', 'active', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 160
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 64
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidHouse(data) {
+      return data.keys().hasAll(['id', 'street', 'number', 'familyName', 'active', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'street', 'number', 'interiorNumber', 'familyName', 'active', 'ownerUid', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.street is string && data.street.size() >= 1 && data.street.size() <= 100
+        && data.number is string && data.number.size() >= 1 && data.number.size() <= 32
+        && (!('interiorNumber' in data) || data.interiorNumber == null || (data.interiorNumber is string && data.interiorNumber.size() <= 32))
+        && data.familyName is string && data.familyName.size() <= 120
+        && data.active is bool
+        && data.ownerUid is string && data.ownerUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidResident(data) {
+      return data.keys().hasAll(['id', 'residentKey', 'username', 'name', 'email', 'role', 'active', 'qrCode', 'carCount', 'vehicleQrCodes', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'residentKey', 'username', 'name', 'email', 'phone', 'role', 'houseId', 'active', 'qrCode', 'carCount', 'vehicleQrCodes', 'ownerUid', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.residentKey is string && data.residentKey.size() >= 4 && data.residentKey.size() <= 20 && data.residentKey.matches('^RES[0-9]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 64
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && isValidOptionalString(data, 'phone', 32)
+        && data.role in ['resident', 'treasurer', 'admin', 'guard']
+        && (!('houseId' in data) || data.houseId == null || (data.houseId is string && data.houseId.size() <= 128))
+        && data.active is bool
+        && data.qrCode is string && data.qrCode.size() <= 64
+        && data.carCount is number && data.carCount >= 0 && data.carCount <= 10
+        && data.vehicleQrCodes is list && data.vehicleQrCodes.size() <= 10
+        && (data.vehicleQrCodes.size() == 0 || data.vehicleQrCodes[0] is map)
+        && data.ownerUid is string && data.ownerUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['id', 'folio', 'houseId', 'userId', 'ownerUid', 'userName', 'periodLabel', 'monthsCovered', 'amountMxn', 'method', 'reference', 'status', 'createdDate', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'folio', 'houseId', 'userId', 'ownerUid', 'userName', 'periodLabel', 'monthsCovered', 'amountMxn', 'approvedAmountMxn', 'method', 'reference', 'receiptFileName', 'receiptFileSizeBytes', 'notes', 'reviewNote', 'status', 'createdDate', 'reviewedAt', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.folio is string && data.folio.size() >= 2 && data.folio.size() <= 32
+        && isValidId(data.houseId)
+        && isValidId(data.userId)
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120
+        && data.periodLabel is string && data.periodLabel.size() >= 1 && data.periodLabel.size() <= 80
+        && data.monthsCovered is number && data.monthsCovered >= 1 && data.monthsCovered <= 24
+        && data.amountMxn is number && data.amountMxn > 0 && data.amountMxn <= 500000
+        && isValidOptionalNumber(data, 'approvedAmountMxn', 0, 500000)
+        && data.method in ['Transferencia SPEI', 'Depósito bancario', 'Efectivo']
+        && data.reference is string && data.reference.size() <= 160
+        && isValidOptionalString(data, 'receiptFileName', 160)
+        && isValidOptionalNumber(data, 'receiptFileSizeBytes', 0, 5242880)
+        && isValidOptionalString(data, 'notes', 500)
+        && isValidOptionalString(data, 'reviewNote', 500)
+        && data.status in ['pending', 'approved', 'adjusted', 'rejected']
+        && data.createdDate is string && data.createdDate.size() >= 8 && data.createdDate.size() <= 20
+        && isValidOptionalString(data, 'reviewedAt', 20)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotice(data) {
+      return data.keys().hasAll(['id', 'title', 'body', 'category', 'urgent', 'pinned', 'sendPush', 'createdDate', 'authorName', 'visibility', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'title', 'body', 'category', 'urgent', 'pinned', 'sendPush', 'createdDate', 'authorName', 'visibility', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 160
+        && data.body is string && data.body.size() >= 5 && data.body.size() <= 3000
+        && data.category in ['administracion', 'mantenimiento', 'seguridad', 'eventos']
+        && data.urgent is bool
+        && data.pinned is bool
+        && data.sendPush is bool
+        && data.createdDate is string && data.createdDate.size() >= 8 && data.createdDate.size() <= 20
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 120
+        && data.visibility == 'community'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['id', 'folio', 'title', 'category', 'description', 'houseId', 'ownerUid', 'authorName', 'status', 'createdDate', 'comments', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'folio', 'title', 'category', 'description', 'location', 'houseId', 'ownerUid', 'authorName', 'status', 'createdDate', 'comments', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.folio is string && data.folio.size() >= 2 && data.folio.size() <= 32
+        && data.title is string && data.title.size() >= 4 && data.title.size() <= 160
+        && data.category in ['Alumbrado', 'Agua', 'Seguridad', 'Áreas verdes', 'Portón', 'Otro']
+        && data.description is string && data.description.size() >= 6 && data.description.size() <= 2000
+        && isValidOptionalString(data, 'location', 160)
+        && data.houseId is string && data.houseId.size() >= 1 && data.houseId.size() <= 128
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 120
+        && data.status in ['open', 'in_progress', 'resolved']
+        && data.createdDate is string && data.createdDate.size() >= 8 && data.createdDate.size() <= 20
+        && data.comments is list && data.comments.size() <= 50
+        && (data.comments.size() == 0 || data.comments[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidVisit(data) {
+      return data.keys().hasAll(['id', 'code', 'houseId', 'ownerUid', 'createdByName', 'visitorName', 'companions', 'accessType', 'validFrom', 'validUntil', 'status', 'createdDate', 'entries', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'code', 'houseId', 'ownerUid', 'createdByName', 'visitorName', 'phone', 'plate', 'vehicleModel', 'vehicleColor', 'companions', 'accessType', 'validFrom', 'validUntil', 'status', 'createdDate', 'entries', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.code is string && data.code.size() >= 4 && data.code.size() <= 32
+        && data.houseId is string && data.houseId.size() >= 1 && data.houseId.size() <= 128
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 120
+        && data.visitorName is string && data.visitorName.size() >= 2 && data.visitorName.size() <= 120
+        && isValidOptionalString(data, 'phone', 32)
+        && isValidOptionalString(data, 'plate', 32)
+        && isValidOptionalString(data, 'vehicleModel', 80)
+        && isValidOptionalString(data, 'vehicleColor', 40)
+        && data.companions is number && data.companions >= 0 && data.companions <= 20
+        && data.accessType in ['single', 'multi']
+        && data.validFrom is string && data.validFrom.size() >= 8 && data.validFrom.size() <= 20
+        && data.validUntil is string && data.validUntil.size() >= 8 && data.validUntil.size() <= 20
+        && data.status in ['active', 'used', 'cancelled']
+        && data.createdDate is string && data.createdDate.size() >= 8 && data.createdDate.size() <= 20
+        && data.entries is list && data.entries.size() <= 50
+        && (data.entries.size() == 0 || data.entries[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFeeSchedule(data) {
+      return data.keys().hasAll(['id', 'monthlyMxn', 'semiannualMxn', 'annualMxn', 'dueDay', 'billingStartMonth', 'effectiveFrom', 'createdDate', 'createdBy', 'visibility', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'monthlyMxn', 'semiannualMxn', 'annualMxn', 'dueDay', 'billingStartMonth', 'effectiveFrom', 'createdDate', 'createdBy', 'visibility', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.monthlyMxn is number && data.monthlyMxn > 0 && data.monthlyMxn <= 100000
+        && data.semiannualMxn is number && data.semiannualMxn > 0 && data.semiannualMxn <= 500000
+        && data.annualMxn is number && data.annualMxn > 0 && data.annualMxn <= 1000000
+        && data.dueDay is number && data.dueDay >= 1 && data.dueDay <= 28
+        && data.billingStartMonth is string && data.billingStartMonth.size() >= 7 && data.billingStartMonth.size() <= 10
+        && data.effectiveFrom is string && data.effectiveFrom.size() >= 8 && data.effectiveFrom.size() <= 20
+        && data.createdDate is string && data.createdDate.size() >= 8 && data.createdDate.size() <= 20
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 120
+        && data.visibility == 'community'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'actorName', 'action', 'timestampLabel', 'createdAt'])
+        && data.keys().hasOnly(['id', 'actorName', 'action', 'timestampLabel', 'beforeSummary', 'afterSummary', 'createdAt'])
+        && isValidId(data.id)
+        && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120
+        && data.action is string && data.action.size() >= 2 && data.action.size() <= 160
+        && data.timestampLabel is string && data.timestampLabel.size() >= 2 && data.timestampLabel.size() <= 64
+        && isValidOptionalString(data, 'beforeSummary', 600)
+        && isValidOptionalString(data, 'afterSummary', 600)
+        && data.createdAt is timestamp;
+    }
+
+    // ==================== COLLECTION RULES ====================
+
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isBootstrapAdmin() || (isVerified() && request.auth.uid == uid));
+      allow list: if isBootstrapAdmin();
+      allow create: if isValidId(uid)
+        && isValidAdminRecord(incoming())
+        && incoming().uid == uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isBootstrapAdmin();
+      allow update: if isValidId(uid)
+        && isValidAdminRecord(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isBootstrapAdmin();
+      allow delete: if isValidId(uid) && isBootstrapAdmin();
+    }
+
+    match /houses/{houseId} {
+      allow get: if isValidId(houseId)
+        && (isAdmin() || (isVerified() && existing().ownerUid == request.auth.uid));
+      allow list: if isBootstrapAdmin()
+        || (isVerified() && existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(houseId)
+        && isValidHouse(incoming())
+        && incoming().id == houseId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(houseId)
+        && isValidHouse(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if isValidId(houseId) && isAdmin();
+    }
+
+    // PII-isolated residents collection: ONLY admin can create/update/delete or view all residents
+    match /residents/{residentId} {
+      allow get: if isValidId(residentId)
+        && (isAdmin() || (isVerified() && existing().ownerUid == request.auth.uid));
+      allow list: if isBootstrapAdmin()
+        || (isVerified() && existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(residentId)
+        && isValidResident(incoming())
+        && incoming().id == residentId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(residentId)
+        && isValidResident(incoming())
+        && incoming().id == existing().id
+        && incoming().residentKey == existing().residentKey
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if isValidId(residentId) && isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId)
+        && (isAdmin() || (isVerified() && existing().ownerUid == request.auth.uid));
+      allow list: if isBootstrapAdmin()
+        || (isVerified() && existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(paymentId)
+        && isValidPayment(incoming())
+        && incoming().id == paymentId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isVerified()
+            && incoming().ownerUid == request.auth.uid
+            && incoming().status == 'pending'
+            && !('approvedAmountMxn' in incoming())
+            && !('reviewNote' in incoming())
+            && !('reviewedAt' in incoming())
+          )
+        );
+      allow update: if isValidId(paymentId)
+        && isValidPayment(incoming())
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if isValidId(paymentId) && isAdmin();
+    }
+
+    match /notices/{noticeId} {
+      allow get: if isValidId(noticeId)
+        && (isAdmin() || (isVerified() && existing().visibility == 'community'));
+      allow list: if isBootstrapAdmin()
+        || (isVerified() && existing().visibility == 'community');
+      allow create: if isValidId(noticeId)
+        && isValidNotice(incoming())
+        && incoming().id == noticeId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(noticeId)
+        && isValidNotice(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if isValidId(noticeId) && isAdmin();
+    }
+
+    match /reports/{reportId} {
+      allow get: if isValidId(reportId)
+        && (isAdmin() || (isVerified() && existing().ownerUid == request.auth.uid));
+      allow list: if isBootstrapAdmin()
+        || (isVerified() && existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(reportId)
+        && isValidReport(incoming())
+        && incoming().id == reportId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isVerified()
+            && incoming().ownerUid == request.auth.uid
+            && incoming().status == 'open'
+          )
+        );
+      allow update: if isValidId(reportId)
+        && isValidReport(incoming())
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isVerified()
+            && existing().ownerUid == request.auth.uid
+            && existing().status != 'resolved'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['comments', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(reportId) && isAdmin();
+    }
+
+    match /visits/{visitId} {
+      allow get: if isValidId(visitId)
+        && (isAdmin() || (isVerified() && existing().ownerUid == request.auth.uid));
+      allow list: if isBootstrapAdmin()
+        || (isVerified() && existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(visitId)
+        && isValidVisit(incoming())
+        && incoming().id == visitId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isVerified()
+            && incoming().ownerUid == request.auth.uid
+            && incoming().status == 'active'
+          )
+        );
+      allow update: if isValidId(visitId)
+        && isValidVisit(incoming())
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isVerified()
+            && existing().ownerUid == request.auth.uid
+            && existing().status != 'cancelled'
+            && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(visitId) && isAdmin();
+    }
+
+    match /feeHistory/{feeId} {
+      allow get: if isValidId(feeId)
+        && (isAdmin() || (isVerified() && existing().visibility == 'community'));
+      allow list: if isBootstrapAdmin()
+        || (isVerified() && existing().visibility == 'community');
+      allow create: if isValidId(feeId)
+        && isValidFeeSchedule(incoming())
+        && incoming().id == feeId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(feeId)
+        && isValidFeeSchedule(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if isValidId(feeId) && isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isBootstrapAdmin();
+      allow create: if isValidId(logId)
+        && isValidAuditLog(incoming())
+        && incoming().id == logId
+        && incoming().createdAt == request.time
+        && isAdmin();
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}

@@ -14,6 +14,7 @@ import type {
   AppRoute,
   CorbatinItem,
   PortalDatabase,
+  PortalUser,
   ScannedResidentData,
 } from '../types/portal';
 import {
@@ -22,6 +23,7 @@ import {
   formatHouseLabel,
   formatVehicleSummary,
   getAllCorbatines,
+  isAdminUser,
 } from '../utils/portalLogic';
 import {
   CORBATIN_HEIGHT_CM,
@@ -32,6 +34,7 @@ import {
 
 interface PrintCorbatinesViewProps {
   db: PortalDatabase;
+  user: PortalUser;
   isAdminLayout?: boolean;
   onNavigate?: (route: AppRoute) => void;
   onScanQr: (data: ScannedResidentData) => void;
@@ -40,12 +43,17 @@ interface PrintCorbatinesViewProps {
 
 export function PrintCorbatinesView({
   db,
+  user,
   isAdminLayout = false,
   onNavigate,
   onScanQr,
   onNotify,
 }: PrintCorbatinesViewProps) {
-  const allItems = useMemo(() => getAllCorbatines(db), [db]);
+  const isAdmin = isAdminUser(user);
+  const allItems = useMemo(
+    () => getAllCorbatines(db, isAdmin ? undefined : user.id),
+    [db, isAdmin, user.id],
+  );
   const [query, setQuery] = useState('');
   const [perPage, setPerPage] = useState<1 | 4>(4);
   const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
@@ -302,7 +310,7 @@ export function PrintCorbatinesView({
             </p>
           </div>
         ) : (
-          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filteredItems.map((item) => {
               const selected = activeSelectionSet.has(item.id);
               const specs = formatVehicleSummary(item.vehicle);

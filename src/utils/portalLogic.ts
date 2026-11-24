@@ -275,10 +275,36 @@ export function parseResidentQrScanParams(
   };
 }
 
-export function getAllCorbatines(db: PortalDatabase): CorbatinItem[] {
+export function isAdminUser(user: Pick<PortalUser, 'role'> | null | undefined): boolean {
+  return user?.role === 'admin';
+}
+
+export function isPrimaryAdminUser(
+  user: Pick<PortalUser, 'id' | 'username' | 'role'> | null | undefined,
+): boolean {
+  if (!user) return false;
+  return user.id === 'usr-admin' || (user.username ?? '').trim().toUpperCase() === 'ADMON';
+}
+
+export function findUserByIdentifier(
+  users: PortalUser[],
+  identifier: string,
+): PortalUser | undefined {
+  const normalized = identifier.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return users.find(
+    (u) =>
+      (u.username ?? '').trim().toLowerCase() === normalized ||
+      u.email.trim().toLowerCase() === normalized ||
+      u.residentKey.trim().toLowerCase() === normalized,
+  );
+}
+
+export function getAllCorbatines(db: PortalDatabase, filterUserId?: string): CorbatinItem[] {
   const houseMap = new Map(db.houses.map((h) => [h.id, h]));
   const items: CorbatinItem[] = [];
   for (const user of db.users) {
+    if (filterUserId && user.id !== filterUserId) continue;
     const house = user.houseId ? houseMap.get(user.houseId) ?? null : null;
     for (const vehicle of user.vehicleQrCodes) {
       items.push({
@@ -362,10 +388,10 @@ export function formatHouseLabel(house: House | undefined | null): string {
   return house.interiorNumber ? `${base} Int. ${house.interiorNumber}` : base;
 }
 
-export function validateLoginInput(email: string, password: string): string | null {
-  const trimmedEmail = email.trim();
-  if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-    return 'Ingresa un correo electrónico válido.';
+export function validateLoginInput(username: string, password: string): string | null {
+  const trimmedUser = username.trim();
+  if (trimmedUser.length < 2) {
+    return 'Ingresa un usuario válido (por ejemplo ADMON o tu correo/clave).';
   }
   if (password.trim().length < 4) {
     return 'Ingresa tu contraseña (mínimo 4 caracteres).';
@@ -476,7 +502,7 @@ export function addAuditEntry(
   options?: { beforeSummary?: string; afterSummary?: string; nowIso?: string },
 ): PortalDatabase {
   const entry: AuditLogEntry = {
-    id: `aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: `aud-${Date.now()}-${db.auditLog.length + 1}-${Math.floor(Math.random() * 1000)}`,
     actorName,
     action,
     timestampLabel: formatAuditTimestamp(options?.nowIso ?? DEFAULT_NOW_ISO),
@@ -959,9 +985,15 @@ export function normalizePortalDatabase(raw: PortalDatabase): PortalDatabase {
         ? u.vehicleQrCodes
         : generateVehicleQrCodes(`${u.email}-${u.id}`, carCount, u.vehicleQrCodes ?? []);
     const qrCode = vehicleQrCodes[0]?.code ?? u.qrCode ?? '';
+    const isPrimary = u.id === 'usr-admin' || (u.username ?? '').trim().toUpperCase() === 'ADMON';
+    const username = isPrimary ? 'ADMON' : (u.username?.trim() || u.email);
     return {
       ...u,
       residentKey,
+      username,
+      name: isPrimary && u.name === 'Admin' ? 'ADMON' : u.name,
+      role: isPrimary ? 'admin' : u.role,
+      active: isPrimary ? true : u.active,
       qrCode,
       carCount,
       vehicleQrCodes,
@@ -1210,7 +1242,7 @@ export function updateHouse(
 }
 
 export interface InviteUserInput {
-  email: string;
+  email?: string;
   name?: string;
   phone?: string;
   role: UserRole;
@@ -1243,7 +1275,11 @@ function validateVehiclesInput(
   const seenInBatch = new Set<string>();
   for (let i = 0; i < carCount; i += 1) {
     const v = vehicles[i];
-    if (!v?.plate?.trim() || !v?.color?.trim() || !v?.model?.trim()) {
+    const hasColorOrModelField = v?.color !== undefined || v?.model !== undefined;
+    if (!v?.plate?.trim()) {
+      return `Completa la placa del Automóvil ${i + 1}.`;
+    }
+    if (hasColorOrModelField && (!v.color?.trim() || !v.model?.trim())) {
       return `Completa placa, color y modelo del Automóvil ${i + 1}.`;
     }
     const plateKey = normalizePlateKey(v.plate);
@@ -1264,23 +1300,32 @@ export function inviteUser(
   actorName: string,
   nowIso = DEFAULT_NOW_ISO,
 ): { db: PortalDatabase; invitation?: Invitation; user?: PortalUser; error?: string } {
-  const email = input.email.trim().toLowerCase();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return { db, error: 'Ingresa un correo válido para el registro.' };
-  }
-  if (db.users.some((u) => u.email.trim().toLowerCase() === email)) {
-    return { db, error: 'Ese correo ya pertenece a un usuario registrado.' };
-  }
-  if (db.invitations.some((i) => i.email.trim().toLowerCase() === email && i.status === 'pending')) {
-    return { db, error: 'Ya existe una invitación pendiente para ese correo.' };
+  const rawEmail = input.email;
+  const email = (rawEmail ?? '').trim().toLowerCase();
+  if (rawEmail !== undefined) {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return { db, error: 'Ingresa un correo válido para el registro.' };
+    }
+    if (db.users.some((u) => u.email.trim().toLowerCase() === email)) {
+      return { db, error: 'Ese correo ya pertenece a un usuario registrado.' };
+    }
+    if (db.invitations.some((i) => i.email.trim().toLowerCase() === email && i.status === 'pending')) {
+      return { db, error: 'Ya existe una invitación pendiente para ese correo.' };
+    }
   }
 
   const displayName =
     input.name?.trim() ||
-    email
-      .split('@')[0]
-      .replace(/[._-]/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    (email
+      ? email
+          .split('@')[0]
+          .replace(/[._-]/g, ' ')
+          .replace(/\b\w/g, (c) => c.toUpperCase())
+      : '');
+
+  if (displayName.length < 2) {
+    return { db, error: 'Ingresa el nombre completo del residente.' };
+  }
 
   const nameKey = normalizeTextKey(displayName);
   if (db.users.some((u) => normalizeTextKey(u.name) === nameKey)) {
@@ -1347,13 +1392,14 @@ export function inviteUser(
 
   const residentKey = generateNextResidentKey(db.users);
   const phone = input.phone?.trim() || undefined;
-  const seed = `${email}-${nowIso}-${db.users.length}`;
+  const seed = `${email || residentKey}-${nowIso}-${db.users.length}`;
   const vehicleQrCodes = generateVehicleQrCodes(seed, carCount, [], input.vehicles);
   const qrCode = vehicleQrCodes[0]?.code ?? '';
 
   const user: PortalUser = {
     id: `usr-${Date.now()}-${db.users.length + 1}`,
     residentKey,
+    username: email || residentKey,
     name: displayName,
     email,
     phone,
@@ -1366,7 +1412,7 @@ export function inviteUser(
   };
 
   const invitation: Invitation = {
-    id: `inv-${Date.now()}`,
+    id: `inv-${Date.now()}-${db.invitations.length + 1}`,
     residentKey,
     email,
     name: displayName,
@@ -1397,9 +1443,13 @@ export function inviteUser(
 
 export interface UpdateUserPatch {
   name?: string;
+  email?: string;
   phone?: string;
   role?: UserRole;
   houseId?: string | null;
+  street?: string;
+  exteriorNumber?: string;
+  interiorNumber?: string;
   active?: boolean;
   carCount?: number;
   vehicles?: VehicleDetailsInput[];
@@ -1411,9 +1461,11 @@ export function updateUserAccess(
   patch: UpdateUserPatch,
   actorName: string,
   nowIso = DEFAULT_NOW_ISO,
-): { db: PortalDatabase; error?: string } {
+): { db: PortalDatabase; user?: PortalUser; error?: string } {
   const existing = db.users.find((u) => u.id === userId);
   if (!existing) return { db, error: 'Usuario no encontrado.' };
+
+  const primaryAdmin = isPrimaryAdminUser(existing);
 
   const nextName = patch.name !== undefined ? patch.name.trim() || existing.name : existing.name;
   const nameKey = normalizeTextKey(nextName);
@@ -1424,16 +1476,85 @@ export function updateUserAccess(
     };
   }
 
-  const nextHouseId = patch.houseId !== undefined ? patch.houseId : existing.houseId;
-  if (nextHouseId && db.users.some((u) => u.id !== userId && u.houseId === nextHouseId)) {
+  let nextEmail = existing.email;
+  if (patch.email !== undefined) {
+    const trimmedEmail = patch.email.trim().toLowerCase();
+    if (trimmedEmail) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        return { db, error: 'Ingresa un correo electrónico válido.' };
+      }
+      if (db.users.some((u) => u.id !== userId && u.email.trim().toLowerCase() === trimmedEmail)) {
+        return { db, error: 'Ese correo ya pertenece a otro usuario registrado.' };
+      }
+    }
+    nextEmail = trimmedEmail;
+  }
+
+  let nextHouses = db.houses;
+  let nextHouseId: string | null =
+    patch.houseId !== undefined ? patch.houseId : existing.houseId;
+
+  if (patch.street !== undefined) {
+    const trimmedStreet = patch.street.trim();
+    if (!trimmedStreet) {
+      nextHouseId = null;
+    } else {
+      const extNum = patch.exteriorNumber?.trim() || '';
+      if (!extNum) {
+        return { db, error: 'Ingresa el Número ext de la casa.' };
+      }
+      const intNum = patch.interiorNumber?.trim() || null;
+      const addrKey = normalizeAddressKey(trimmedStreet, extNum, intNum);
+      const duplicateHouse = db.houses.find(
+        (h) =>
+          h.id !== existing.houseId &&
+          normalizeAddressKey(h.street, h.number, h.interiorNumber) === addrKey,
+      );
+      if (duplicateHouse) {
+        return {
+          db,
+          error: 'Esa dirección de casa ya está registrada. Las direcciones no se pueden repetir.',
+        };
+      }
+      if (existing.houseId && db.houses.some((h) => h.id === existing.houseId)) {
+        nextHouses = db.houses.map((h) =>
+          h.id === existing.houseId
+            ? {
+                ...h,
+                street: trimmedStreet,
+                number: extNum,
+                interiorNumber: intNum,
+                familyName: nextName,
+              }
+            : h,
+        );
+        nextHouseId = existing.houseId;
+      } else {
+        const createdHouse: House = {
+          id: `house-${Date.now()}-${db.houses.length + 1}`,
+          street: trimmedStreet,
+          number: extNum,
+          interiorNumber: intNum,
+          familyName: nextName,
+          active: true,
+        };
+        nextHouses = [...db.houses, createdHouse];
+        nextHouseId = createdHouse.id;
+      }
+    }
+  } else if (nextHouseId && db.users.some((u) => u.id !== userId && u.houseId === nextHouseId)) {
     return {
       db,
       error: 'Esa dirección de casa ya está asignada a otro residente. No se puede repetir.',
     };
   }
 
-  const nextRole = patch.role ?? existing.role;
-  const nextActive = patch.active !== undefined ? patch.active : existing.active;
+  const nextRole = primaryAdmin ? 'admin' : (patch.role ?? existing.role);
+  const nextActive = primaryAdmin ? true : (patch.active !== undefined ? patch.active : existing.active);
+
+  if (primaryAdmin && (patch.role && patch.role !== 'admin' || patch.active === false)) {
+    return { db, error: 'La cuenta principal del administrador ADMON debe permanecer activa con rol de administrador.' };
+  }
 
   const roleLimitError = validateRoleLimit(db, nextRole, {
     excludeUserId: userId,
@@ -1454,7 +1575,7 @@ export function updateUserAccess(
   }
 
   const nextVehicleQrs = generateVehicleQrCodes(
-    `${existing.email}-${existing.id}`,
+    `${nextEmail}-${existing.id}`,
     nextCarCount,
     existing.vehicleQrCodes,
     patch.vehicles,
@@ -1462,7 +1583,9 @@ export function updateUserAccess(
 
   const updated: PortalUser = {
     ...existing,
+    username: primaryAdmin ? 'ADMON' : nextEmail,
     name: nextName,
+    email: nextEmail,
     phone: patch.phone !== undefined ? patch.phone.trim() || undefined : existing.phone,
     role: nextRole,
     houseId: nextHouseId,
@@ -1474,12 +1597,60 @@ export function updateUserAccess(
 
   let nextDb: PortalDatabase = {
     ...db,
+    houses: nextHouses,
     users: db.users.map((u) => (u.id === userId ? updated : u)),
   };
 
-  nextDb = addAuditEntry(nextDb, actorName, 'Cambió el acceso de un usuario', {
-    beforeSummary: `clave: ${existing.residentKey} · role: ${existing.role} · active: ${existing.active} · autos: ${existing.carCount} · houseId: ${existing.houseId ?? 'null'}`,
-    afterSummary: `clave: ${updated.residentKey} · role: ${updated.role} · active: ${updated.active} · autos: ${updated.carCount} · houseId: ${updated.houseId ?? 'null'}`,
+  nextDb = addAuditEntry(nextDb, actorName, 'Actualizó los datos de un residente', {
+    beforeSummary: `clave: ${existing.residentKey} · nombre: ${existing.name} · email: ${existing.email} · role: ${existing.role} · active: ${existing.active} · autos: ${existing.carCount}`,
+    afterSummary: `clave: ${updated.residentKey} · nombre: ${updated.name} · email: ${updated.email} · role: ${updated.role} · active: ${updated.active} · autos: ${updated.carCount}`,
+    nowIso,
+  });
+
+  return { db: nextDb, user: updated };
+}
+
+export function deleteResident(
+  db: PortalDatabase,
+  userId: string,
+  actorName: string,
+  nowIso = DEFAULT_NOW_ISO,
+): { db: PortalDatabase; error?: string } {
+  const existing = db.users.find((u) => u.id === userId);
+  if (!existing) {
+    return { db, error: 'Residente no encontrado.' };
+  }
+  if (isPrimaryAdminUser(existing)) {
+    return { db, error: 'No se puede eliminar la cuenta principal del administrador ADMON.' };
+  }
+
+  const nextUsers = db.users.filter((u) => u.id !== userId);
+  const nextInvitations = db.invitations.filter(
+    (inv) => inv.email.trim().toLowerCase() !== existing.email.trim().toLowerCase(),
+  );
+
+  // Release unreferenced house if no other user, payment, report, or pass belongs to it
+  let nextHouses = db.houses;
+  if (existing.houseId) {
+    const houseStillUsed =
+      nextUsers.some((u) => u.houseId === existing.houseId) ||
+      db.payments.some((p) => p.houseId === existing.houseId) ||
+      db.reports.some((r) => r.houseId === existing.houseId) ||
+      db.passes.some((p) => p.houseId === existing.houseId);
+    if (!houseStillUsed) {
+      nextHouses = db.houses.filter((h) => h.id !== existing.houseId);
+    }
+  }
+
+  let nextDb: PortalDatabase = {
+    ...db,
+    houses: nextHouses,
+    users: nextUsers,
+    invitations: nextInvitations,
+  };
+
+  nextDb = addAuditEntry(nextDb, actorName, 'Eliminó un residente', {
+    beforeSummary: `clave: ${existing.residentKey} · nombre: ${existing.name} · email: ${existing.email} · autos: ${existing.carCount}`,
     nowIso,
   });
 
@@ -1549,3 +1720,378 @@ export function buildQrMatrix(code: string): boolean[][] {
   );
   return grid;
 }
+
+/* ==================== IMPORTACIÓN MASIVA EXCEL / CSV ==================== */
+
+export const MAX_EXCEL_IMPORT_BYTES = 5 * 1024 * 1024; // 5 MB
+export const MAX_EXCEL_IMPORT_ROWS = 500;
+
+export interface ParsedExcelResidentRow {
+  rowNumber: number;
+  name: string;
+  phone?: string;
+  email?: string;
+  street?: string;
+  exteriorNumber?: string;
+  interiorNumber?: string;
+  plates: string[];
+}
+
+export interface ExcelImportSkippedRow {
+  rowNumber: number;
+  name: string;
+  reason: string;
+}
+
+export interface ExcelImportBatchResult {
+  db: PortalDatabase;
+  added: PortalUser[];
+  skipped: ExcelImportSkippedRow[];
+}
+
+function stripDiacritics(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizeHeaderKey(value: unknown): string {
+  return stripDiacritics(String(value ?? ''))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function cellToString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).trim();
+}
+
+function normalizeResidentialStreet(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const needle = stripDiacritics(trimmed)
+    .toLowerCase()
+    .replace(/^(av\.?|avenida|calle|c\.?)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  for (const official of RESIDENTIAL_STREETS) {
+    const officialFull = stripDiacritics(official).toLowerCase();
+    const officialCore = officialFull.replace(/^(av\.?|avenida|calle)\s+/i, '').trim();
+    if (stripDiacritics(trimmed).toLowerCase() === officialFull || needle === officialCore) {
+      return official;
+    }
+  }
+  return trimmed;
+}
+
+export function parseCsvText(text: string): string[][] {
+  const clean = text.replace(/^\uFEFF/, '');
+  const firstLine = clean.split(/\r?\n/).find((l) => l.trim().length > 0) ?? '';
+  let commaCount = 0;
+  let semiCount = 0;
+  let inQ = false;
+  for (let i = 0; i < firstLine.length; i += 1) {
+    const ch = firstLine[i];
+    if (ch === '"') {
+      inQ = !inQ;
+    } else if (!inQ) {
+      if (ch === ',') commaCount += 1;
+      else if (ch === ';') semiCount += 1;
+    }
+  }
+  const delimiter = semiCount > commaCount ? ';' : ',';
+
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < clean.length; i += 1) {
+    const ch = clean[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (clean[i + 1] === '"') {
+          field += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      row.push(field.trim());
+      field = '';
+    } else if (ch === '\r') {
+      if (clean[i + 1] === '\n') i += 1;
+      row.push(field.trim());
+      rows.push(row);
+      row = [];
+      field = '';
+    } else if (ch === '\n') {
+      row.push(field.trim());
+      rows.push(row);
+      row = [];
+      field = '';
+    } else {
+      field += ch;
+    }
+  }
+
+  if (field.length > 0 || row.length > 0) {
+    row.push(field.trim());
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+export function parseExcelResidentRows(matrix: unknown[][]): {
+  rows: ParsedExcelResidentRow[];
+  parseError?: string;
+} {
+  const nonEmptyEntries: Array<{ rowNumber: number; cells: unknown[] }> = [];
+  for (let i = 0; i < matrix.length; i += 1) {
+    const cells = Array.isArray(matrix[i]) ? matrix[i] : [];
+    const hasContent = cells.some((c) => cellToString(c).length > 0);
+    if (hasContent) {
+      nonEmptyEntries.push({ rowNumber: i + 1, cells });
+    }
+  }
+
+  if (nonEmptyEntries.length < 2) {
+    return {
+      rows: [],
+      parseError:
+        'El archivo debe contener una fila de encabezados y al menos una fila de residentes.',
+    };
+  }
+
+  const headerRow = nonEmptyEntries[0].cells.map(normalizeHeaderKey);
+  let nameCol = -1;
+  let phoneCol = -1;
+  let emailCol = -1;
+  let streetCol = -1;
+  let extCol = -1;
+  let intCol = -1;
+  const plateCols: number[] = [];
+
+  headerRow.forEach((h, idx) => {
+    if (!h) return;
+    if (
+      nameCol === -1 &&
+      (h === 'nombre' ||
+        h === 'nombre completo' ||
+        h === 'residente' ||
+        h === 'titular' ||
+        h === 'propietario' ||
+        h === 'vecino' ||
+        h === 'name' ||
+        h.startsWith('nombre'))
+    ) {
+      nameCol = idx;
+      return;
+    }
+    if (
+      phoneCol === -1 &&
+      (h === 'telefono' ||
+        h === 'numero de telefono' ||
+        h === 'tel' ||
+        h === 'celular' ||
+        h === 'movil' ||
+        h === 'whatsapp' ||
+        h === 'phone' ||
+        h.includes('telefono') ||
+        h.includes('celular'))
+    ) {
+      phoneCol = idx;
+      return;
+    }
+    if (
+      emailCol === -1 &&
+      (h === 'correo' ||
+        h === 'correo electronico' ||
+        h === 'email' ||
+        h === 'e mail' ||
+        h === 'mail' ||
+        h.includes('correo'))
+    ) {
+      emailCol = idx;
+      return;
+    }
+    if (
+      streetCol === -1 &&
+      (h === 'calle' ||
+        h === 'calle avenida' ||
+        h === 'avenida' ||
+        h === 'direccion' ||
+        h === 'domicilio' ||
+        h === 'street' ||
+        h.startsWith('calle'))
+    ) {
+      streetCol = idx;
+      return;
+    }
+    if (
+      extCol === -1 &&
+      (h === 'numero ext' ||
+        h === 'num ext' ||
+        h === 'no ext' ||
+        h === 'exterior' ||
+        h === 'numero exterior' ||
+        h === 'num exterior' ||
+        h === 'numero' ||
+        h === 'num' ||
+        h === 'casa' ||
+        h === 'ext')
+    ) {
+      extCol = idx;
+      return;
+    }
+    if (
+      intCol === -1 &&
+      (h === 'num int' ||
+        h === 'numero int' ||
+        h === 'no int' ||
+        h === 'interior' ||
+        h === 'numero interior' ||
+        h === 'num interior' ||
+        h === 'int' ||
+        h === 'depto' ||
+        h === 'departamento' ||
+        h === 'lote')
+    ) {
+      intCol = idx;
+      return;
+    }
+    if (
+      h === 'placa' ||
+      h === 'placas' ||
+      h === 'plate' ||
+      h === 'plates' ||
+      /^placa\s*\d+$/.test(h) ||
+      /^placas\s*\d+$/.test(h) ||
+      /^auto\s*\d+$/.test(h) ||
+      /^vehiculo\s*\d+$/.test(h) ||
+      h.includes('placa')
+    ) {
+      plateCols.push(idx);
+    }
+  });
+
+  if (nameCol === -1) {
+    return {
+      rows: [],
+      parseError:
+        'No se encontró la columna "Nombre completo" (o "Nombre"). Descarga la plantilla Excel para ver el formato recomendado.',
+    };
+  }
+
+  const dataEntries = nonEmptyEntries.slice(1);
+  if (dataEntries.length > MAX_EXCEL_IMPORT_ROWS) {
+    return {
+      rows: [],
+      parseError: `El archivo supera el límite de ${MAX_EXCEL_IMPORT_ROWS} filas por importación (${dataEntries.length} filas detectadas).`,
+    };
+  }
+
+  const rows: ParsedExcelResidentRow[] = dataEntries.map(({ rowNumber, cells }) => {
+    const name = cellToString(cells[nameCol]);
+    const phone = phoneCol >= 0 ? cellToString(cells[phoneCol]) || undefined : undefined;
+    const email = emailCol >= 0 ? cellToString(cells[emailCol]) || undefined : undefined;
+    let rawStreet = streetCol >= 0 ? cellToString(cells[streetCol]) : '';
+    let exteriorNumber = extCol >= 0 ? cellToString(cells[extCol]) || undefined : undefined;
+    const interiorNumber = intCol >= 0 ? cellToString(cells[intCol]) || undefined : undefined;
+
+    // Support combined street + number in a single cell (e.g. "Av. Cantera #205")
+    if (rawStreet && !exteriorNumber) {
+      const combinedMatch = /^(.+?)\s*#?\s*(\d+[A-Za-z]?)$/.exec(rawStreet);
+      if (combinedMatch) {
+        rawStreet = combinedMatch[1].trim();
+        exteriorNumber = combinedMatch[2].trim();
+      }
+    }
+
+    const street = rawStreet ? normalizeResidentialStreet(rawStreet) : undefined;
+
+    const plates: string[] = [];
+    for (const colIdx of plateCols) {
+      const rawPlateCell = cellToString(cells[colIdx]);
+      if (!rawPlateCell) continue;
+      for (const token of rawPlateCell.split(/[,;/|\n]+/)) {
+        const cleaned = token.trim().toUpperCase();
+        if (cleaned) plates.push(cleaned);
+      }
+    }
+
+    return {
+      rowNumber,
+      name,
+      phone,
+      email,
+      street,
+      exteriorNumber,
+      interiorNumber,
+      plates,
+    };
+  });
+
+  return { rows };
+}
+
+export function importResidentsBatch(
+  db: PortalDatabase,
+  rows: ParsedExcelResidentRow[],
+  actorName: string,
+  nowIso = DEFAULT_NOW_ISO,
+): ExcelImportBatchResult {
+  let currentDb = db;
+  const added: PortalUser[] = [];
+  const skipped: ExcelImportSkippedRow[] = [];
+
+  for (const row of rows.slice(0, MAX_EXCEL_IMPORT_ROWS)) {
+    const cleanName = row.name.trim();
+    const vehicles: VehicleDetailsInput[] = row.plates.map((plate) => ({ plate }));
+    const res = inviteUser(
+      currentDb,
+      {
+        ...(row.email ? { email: row.email } : {}),
+        name: cleanName,
+        phone: row.phone,
+        role: 'resident',
+        houseId: null,
+        street: row.street,
+        exteriorNumber: row.exteriorNumber,
+        interiorNumber: row.interiorNumber,
+        carCount: vehicles.length,
+        vehicles,
+      },
+      actorName,
+      nowIso,
+    );
+
+    if (res.error || !res.user) {
+      skipped.push({
+        rowNumber: row.rowNumber,
+        name: cleanName || '(Sin nombre)',
+        reason: res.error ?? 'No se pudo registrar esta fila.',
+      });
+    } else {
+      currentDb = res.db;
+      added.push(res.user);
+    }
+  }
+
+  if (added.length > 0) {
+    currentDb = addAuditEntry(currentDb, actorName, 'Importó residentes desde Excel', {
+      afterSummary: `agregados: ${added.length} · omitidos: ${skipped.length} · claves: ${added.map((u) => u.residentKey).join(', ')}`,
+      nowIso,
+    });
+  }
+
+  return { db: currentDb, added, skipped };
+}
+

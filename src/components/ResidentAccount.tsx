@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, BellOff, Car, ChevronLeft, Download, LogOut, QrCode, Shield, Users } from 'lucide-react';
+import { Bell, BellOff, Car, ChevronLeft, Download, LogOut, QrCode, Shield } from 'lucide-react';
 import type { AppRoute, PortalDatabase, PortalUser, ScannedResidentData } from '../types/portal';
 import {
   buildVehicleScanUrl,
@@ -17,7 +17,6 @@ interface ResidentAccountProps {
   onNavigate: (route: AppRoute) => void;
   onTogglePush: () => void;
   onInstallApp: () => void;
-  onSwitchUser: (userId: string) => void;
   onScanQr: (data: ScannedResidentData) => void;
   onNotify: (message: string) => void;
   onLogout: () => void;
@@ -29,7 +28,6 @@ export function ResidentAccount({
   onNavigate,
   onTogglePush,
   onInstallApp,
-  onSwitchUser,
   onScanQr,
   onNotify,
   onLogout,
@@ -168,51 +166,6 @@ export function ResidentAccount({
           <Shield className="size-5 text-cantera" />
           <span>Aviso de privacidad</span>
         </button>
-
-        {/* Active user switcher for testing resident vs unassigned admin account */}
-        {db.users.length > 1 && (
-          <section className="flex flex-col gap-2.5 rounded-[18px] border border-line bg-white p-[18px]">
-            <div className="flex items-center gap-2 text-xs font-semibold tracking-[0.08em] text-stone uppercase">
-              <Users className="size-3.5 text-cantera" />
-              Cambiar perfil activo
-            </div>
-            <div className="flex flex-col gap-2">
-              {db.users
-                .filter((u) => u.active)
-                .map((candidate) => {
-                  const cHouse = candidate.houseId
-                    ? db.houses.find((h) => h.id === candidate.houseId)
-                    : null;
-                  const isCurrent = candidate.id === user.id;
-                  return (
-                    <button
-                      key={candidate.id}
-                      type="button"
-                      onClick={() => onSwitchUser(candidate.id)}
-                      className={`flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-left transition-colors ${
-                        isCurrent
-                          ? 'border-cantera bg-cantera-soft/60'
-                          : 'border-line bg-white hover:bg-sand-2/50'
-                      }`}
-                    >
-                      <div className="flex flex-col">
-                        <span className="text-sm font-semibold text-ink">{candidate.name}</span>
-                        <span className="text-xs text-stone">
-                          {ROLE_LABELS[candidate.role]}
-                          {cHouse ? ` · ${formatHouseLabel(cHouse)}` : ' · Sin casa ligada'}
-                        </span>
-                      </div>
-                      {isCurrent && (
-                        <span className="rounded-full bg-cantera px-2 py-0.5 text-xs font-semibold text-white">
-                          Activo
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-            </div>
-          </section>
-        )}
 
         <button
           type="button"

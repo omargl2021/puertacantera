@@ -15,13 +15,20 @@ import {
   computeHouseBalance,
   createReport,
   createVisitPass,
+  deleteResident,
+  findUserByIdentifier,
   formatMxnWhole,
   formatShortDateEs,
   generateNextResidentKey,
   getAllCorbatines,
+  importResidentsBatch,
   inviteUser,
+  isAdminUser,
+  isPrimaryAdminUser,
   MAX_RECEIPT_IMAGE_BYTES,
   normalizePortalDatabase,
+  parseCsvText,
+  parseExcelResidentRows,
   parseResidentQrScanParams,
   publishNotice,
   reviewPayment,
@@ -41,10 +48,11 @@ test('formatMxnWhole and formatShortDateEs match Puerta Cantera Spanish formatti
   assert.equal(formatShortDateEs('2026-11-16', false), '16 nov');
 });
 
-test('validateLoginInput rejects bad email or short password', () => {
-  assert.ok(validateLoginInput('invalido', '123456'));
-  assert.ok(validateLoginInput('admin@puertacantera.com', '12'));
-  assert.equal(validateLoginInput('admin@puertacantera.com', 'cantera2026'), null);
+test('validateLoginInput accepts usernames and emails and rejects empty/short inputs', () => {
+  assert.ok(validateLoginInput('a', 'puerta123'));
+  assert.ok(validateLoginInput('ADMON', '12'));
+  assert.equal(validateLoginInput('ADMON', 'puerta123'), null);
+  assert.equal(validateLoginInput('daniel@appmrl.mx', 'cantera2026'), null);
 });
 
 test('computeHouseBalance starts De Las Flores #389 with 1 month owed ($400) and settles after approved payment', () => {
@@ -344,11 +352,11 @@ test('inviteUser stores phone and per-car plate/color/model and rejects incomple
 });
 
 test('role limits enforce maximum 1 treasurer and maximum 5 mesa directiva (admin)', () => {
-  // Seed already has 2 active admins (Admin + Daniel Cruz) and 0 treasurers
+  // Seed has 1 active admin (ADMON) and 1 active resident (Daniel Cruz) and 0 treasurers
   const t1 = inviteUser(
     SEED_DATABASE,
     { email: 'tesorero1@correo.com', role: 'treasurer', houseId: null, carCount: 0 },
-    'Admin',
+    'ADMON',
   );
   assert.equal(t1.error, undefined);
 
@@ -356,7 +364,7 @@ test('role limits enforce maximum 1 treasurer and maximum 5 mesa directiva (admi
   const t2 = inviteUser(
     t1.db,
     { email: 'tesorero2@correo.com', role: 'treasurer', houseId: null, carCount: 0 },
-    'Admin',
+    'ADMON',
   );
   assert.ok(t2.error?.includes('Tesorería'));
 
@@ -365,7 +373,7 @@ test('role limits enforce maximum 1 treasurer and maximum 5 mesa directiva (admi
     t1.db,
     t1.user!.id,
     { name: 'Tesorero Principal', role: 'treasurer' },
-    'Admin',
+    'ADMON',
   );
   assert.equal(editSameTreasurer.error, undefined);
 
@@ -374,17 +382,17 @@ test('role limits enforce maximum 1 treasurer and maximum 5 mesa directiva (admi
     t1.db,
     SEED_DATABASE.users[1].id,
     { role: 'treasurer' },
-    'Admin',
+    'ADMON',
   );
   assert.ok(promoteTreasurer.error?.includes('Tesorería'));
 
-  // Add 3 more admins to reach the cap of 5 (2 seed + 3 new = 5)
+  // Add 4 more admins to reach the cap of 5 (1 seed + 4 new = 5)
   let currentDb = t1.db;
-  for (let i = 3; i <= 5; i += 1) {
+  for (let i = 2; i <= 5; i += 1) {
     const res = inviteUser(
       currentDb,
       { email: `mesa${i}@correo.com`, role: 'admin', houseId: null, carCount: 0 },
-      'Admin',
+      'ADMON',
     );
     assert.equal(res.error, undefined);
     currentDb = res.db;
@@ -394,7 +402,7 @@ test('role limits enforce maximum 1 treasurer and maximum 5 mesa directiva (admi
   const admin6 = inviteUser(
     currentDb,
     { email: 'mesa6@correo.com', role: 'admin', houseId: null, carCount: 0 },
-    'Admin',
+    'ADMON',
   );
   assert.ok(admin6.error?.includes('Mesa directiva'));
 
@@ -403,13 +411,13 @@ test('role limits enforce maximum 1 treasurer and maximum 5 mesa directiva (admi
     currentDb,
     currentDb.users[currentDb.users.length - 1].id,
     { active: false },
-    'Admin',
+    'ADMON',
   );
   assert.equal(deactivated.error, undefined);
   const replacementAdmin = inviteUser(
     deactivated.db,
     { email: 'mesa6-nuevo@correo.com', role: 'admin', houseId: null, carCount: 0 },
-    'Admin',
+    'ADMON',
   );
   assert.equal(replacementAdmin.error, undefined);
 });
@@ -654,6 +662,155 @@ test('QR scan URL round-trips resident details and getAllCorbatines / chunkCorba
   assert.equal(fourUpPages.length, 2);
   assert.equal(fourUpPages[0].length, 4);
   assert.equal(fourUpPages[1].length, 1);
+
+  // Non-admin scoping: passing daniel.id returns only Daniel Cruz's 2 corbatines
+  const danielOnlyCorbatines = getAllCorbatines(added.db, daniel.id);
+  assert.equal(danielOnlyCorbatines.length, 2);
+  assert.ok(danielOnlyCorbatines.every((item) => item.user.id === daniel.id));
+});
+
+test('ADMON admin RBAC, resident full update (email + address), and deleteResident lifecycle', () => {
+  const admin = findUserByIdentifier(SEED_DATABASE.users, 'ADMON');
+  const daniel = findUserByIdentifier(SEED_DATABASE.users, 'RES002');
+  assert.ok(admin);
+  assert.ok(daniel);
+  assert.equal(isAdminUser(admin), true);
+  assert.equal(isPrimaryAdminUser(admin), true);
+  assert.equal(isAdminUser(daniel), false);
+  assert.equal(isPrimaryAdminUser(daniel), false);
+
+  // ADMON cannot be deleted or deactivated/demoted
+  const cannotDeleteAdmin = deleteResident(SEED_DATABASE, admin.id, 'ADMON');
+  assert.ok(cannotDeleteAdmin.error?.includes('ADMON'));
+  const cannotDemoteAdmin = updateUserAccess(SEED_DATABASE, admin.id, { role: 'resident' }, 'ADMON');
+  assert.ok(cannotDemoteAdmin.error?.includes('ADMON'));
+
+  // Update Daniel's email, phone, and address
+  const updated = updateUserAccess(
+    SEED_DATABASE,
+    daniel.id,
+    {
+      email: 'daniel.nuevo@appmrl.mx',
+      phone: '442 999 8888',
+      street: 'Av. Cantera',
+      exteriorNumber: '450',
+      interiorNumber: 'A',
+    },
+    'ADMON',
+  );
+  assert.equal(updated.error, undefined);
+  const editedDaniel = updated.db.users.find((u) => u.id === daniel.id);
+  assert.equal(editedDaniel?.email, 'daniel.nuevo@appmrl.mx');
+  assert.equal(editedDaniel?.phone, '442 999 8888');
+  const editedHouse = updated.db.houses.find((h) => h.id === editedDaniel?.houseId);
+  assert.equal(editedHouse?.street, 'Av. Cantera');
+  assert.equal(editedHouse?.number, '450');
+  assert.equal(editedHouse?.interiorNumber, 'A');
+
+  // Add a temporary resident and delete them cleanly (removes user + unreferenced house)
+  const temp = inviteUser(
+    updated.db,
+    {
+      email: 'temporal@correo.com',
+      name: 'Sofía Temporal',
+      phone: '442 111 2222',
+      role: 'resident',
+      houseId: null,
+      street: 'Calle Flor de Loto',
+      exteriorNumber: '77',
+      carCount: 1,
+      vehicles: [{ plate: 'QRO-999-Z', color: 'Azul', model: 'Kia Rio' }],
+    },
+    'ADMON',
+  );
+  assert.equal(temp.error, undefined);
+  assert.ok(temp.user);
+  const tempHouseId = temp.user.houseId;
+
+  const deleted = deleteResident(temp.db, temp.user.id, 'ADMON');
+  assert.equal(deleted.error, undefined);
+  assert.equal(deleted.db.users.some((u) => u.id === temp.user!.id), false);
+  assert.equal(deleted.db.houses.some((h) => h.id === tempHouseId), false);
+  assert.equal(deleted.db.auditLog[0].action, 'Eliminó un residente');
+});
+
+test('inviteUser supports streamlined resident creation without email and with plate-only vehicles', () => {
+  const created = inviteUser(
+    SEED_DATABASE,
+    {
+      name: 'Roberto Vega',
+      phone: '442 333 4444',
+      role: 'resident',
+      houseId: null,
+      street: 'Calle Girasol',
+      exteriorNumber: '88',
+      carCount: 1,
+      vehicles: [{ plate: 'qro-555-k' }],
+    },
+    'ADMON',
+  );
+  assert.equal(created.error, undefined);
+  assert.equal(created.user?.residentKey, 'RES003');
+  assert.equal(created.user?.username, 'RES003');
+  assert.equal(created.user?.email, '');
+  assert.equal(created.user?.vehicleQrCodes[0].plate, 'QRO-555-K');
+
+  // Updating phone on a resident with no email succeeds cleanly
+  const updated = updateUserAccess(
+    created.db,
+    created.user!.id,
+    { email: '', phone: '442 666 7777', carCount: 1, vehicles: [{ plate: 'QRO-555-K' }] },
+    'ADMON',
+  );
+  assert.equal(updated.error, undefined);
+  assert.equal(updated.db.users.find((u) => u.id === created.user!.id)?.phone, '442 666 7777');
+});
+
+test('parseCsvText, parseExcelResidentRows, and importResidentsBatch import valid rows and skip duplicates with exact row numbers', () => {
+  // Semicolon CSV (common in Spanish Excel) with quoted multi-plate cell
+  const csv = [
+    'Nombre completo;Teléfono;Calle;Número ext;Num Int;Placas',
+    'Ana Morales;442 123 4567;cantera;205;;"QRO-111-A, QRO-222-B"',
+    'Carlos Mendoza;442 987 6543;Calle Girasol;112;2B;QRO-333-C',
+    'Daniel Cruz;442 000 0000;Calle Violeta;10;;QRO-444-D', // duplicate existing name
+    'Laura Ríos;442 222 3333;Av. Cantera;205;;QRO-555-E', // duplicate address with Ana Morales
+    'Miguel Ángel;442 444 5555;Calle Violeta;88;;qro-111-a', // duplicate plate with Ana Morales
+  ].join('\r\n');
+
+  const matrix = parseCsvText(csv);
+  const parsed = parseExcelResidentRows(matrix);
+  assert.equal(parsed.parseError, undefined);
+  assert.equal(parsed.rows.length, 5);
+  assert.equal(parsed.rows[0].street, 'Av. Cantera'); // normalized to official street
+  assert.deepEqual(parsed.rows[0].plates, ['QRO-111-A', 'QRO-222-B']);
+  assert.equal(parsed.rows[1].interiorNumber, '2B');
+
+  const batch = importResidentsBatch(SEED_DATABASE, parsed.rows, 'ADMON', '2026-11-21T16:00:00');
+  assert.equal(batch.added.length, 2);
+  assert.equal(batch.skipped.length, 3);
+
+  assert.equal(batch.added[0].residentKey, 'RES003');
+  assert.equal(batch.added[0].name, 'Ana Morales');
+  assert.equal(batch.added[0].vehicleQrCodes.length, 2);
+  assert.equal(batch.added[1].residentKey, 'RES004');
+  assert.equal(batch.added[1].name, 'Carlos Mendoza');
+  assert.equal(batch.added[1].vehicleQrCodes.length, 1);
+
+  assert.equal(batch.skipped[0].rowNumber, 4);
+  assert.ok(batch.skipped[0].reason.includes('nombre'));
+  assert.equal(batch.skipped[1].rowNumber, 5);
+  assert.ok(batch.skipped[1].reason.includes('dirección'));
+  assert.equal(batch.skipped[2].rowNumber, 6);
+  assert.ok(batch.skipped[2].reason.includes('placa'));
+
+  assert.equal(batch.db.auditLog[0].action, 'Importó residentes desde Excel');
+
+  // Missing required Nombre column returns clear parseError
+  const badHeaders = parseExcelResidentRows([
+    ['Calle', 'Placas'],
+    ['Av. Cantera', 'QRO-100-A'],
+  ]);
+  assert.ok(badHeaders.parseError?.includes('Nombre'));
 });
 
 

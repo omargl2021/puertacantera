@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react';
-import { Car, Pencil, Pin, QrCode, Trash2, X } from 'lucide-react';
+import { Car, FileSpreadsheet, Pencil, Pin, QrCode, Trash2, X } from 'lucide-react';
+import { EditResidentModal } from './EditResidentModal';
 import { EntryPassModal } from './EntryPassModal';
+import { ImportExcelModal } from './ImportExcelModal';
 import { QrCodeSvg } from './QrCodeSvg';
 import type {
   House,
@@ -21,12 +23,15 @@ import {
   formatShortDateEs,
   formatVehicleSummary,
   getRoleUsage,
+  isPrimaryAdminUser,
   NOTICE_CATEGORY_LABELS,
   REPORT_STATUS_LABELS,
   ROLE_LABELS,
   ROLE_LIMITS,
   type AddHouseInput,
+  type ExcelImportBatchResult,
   type InviteUserInput,
+  type ParsedExcelResidentRow,
   type PublishNoticeInput,
   type UpdateUserPatch,
 } from '../utils/portalLogic';
@@ -571,7 +576,9 @@ interface AdminDirectoryViewProps {
     patch: Partial<Pick<House, 'street' | 'number' | 'interiorNumber' | 'familyName' | 'active'>>,
   ) => string | null;
   onInviteUser: (input: InviteUserInput) => { user?: PortalUser; error: string | null };
+  onImportResidents: (rows: ParsedExcelResidentRow[]) => ExcelImportBatchResult;
   onUpdateUser: (userId: string, patch: UpdateUserPatch) => string | null;
+  onDeleteUser: (userId: string) => string | null;
   onScanQr: (data: ScannedResidentData) => void;
   onNotify: (message: string) => void;
 }
@@ -589,7 +596,9 @@ export function AdminDirectoryView({
   onAddHouse,
   onUpdateHouse,
   onInviteUser,
+  onImportResidents,
   onUpdateUser,
+  onDeleteUser,
   onScanQr,
   onNotify,
 }: AdminDirectoryViewProps) {
@@ -613,9 +622,11 @@ export function AdminDirectoryView({
   const [familyName, setFamilyName] = useState('');
   const [houseError, setHouseError] = useState<string | null>(null);
 
-  // Modals
+  // Modals & confirmations
+  const [showImportExcel, setShowImportExcel] = useState(false);
   const [editingHouse, setEditingHouse] = useState<House | null>(null);
   const [editingUser, setEditingUser] = useState<PortalUser | null>(null);
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
   const [passModalUserId, setPassModalUserId] = useState<string | null>(null);
 
   const houseMap = new Map(db.houses.map((h) => [h.id, h]));
@@ -707,6 +718,14 @@ export function AdminDirectoryView({
             Vecinos y casas
           </h1>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowImportExcel(true)}
+          className="inline-flex h-11 items-center gap-2 rounded-xl border border-gold/45 bg-night px-4 text-sm font-semibold text-gold-light shadow-sm transition-colors hover:bg-cantera hover:text-white"
+        >
+          <FileSpreadsheet className="size-4 text-gold" />
+          Importar Excel
+        </button>
       </header>
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1218,6 +1237,38 @@ export function AdminDirectoryView({
                       >
                         <Pencil className="size-4" />
                       </button>
+                      {!isPrimaryAdminUser(u) &&
+                        (confirmDeleteUserId === u.id ? (
+                          <div className="inline-flex items-center gap-1 rounded-[10px] border border-bad/30 bg-bad-bg px-2 py-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const err = onDeleteUser(u.id);
+                                if (err) onNotify(err);
+                                setConfirmDeleteUserId(null);
+                              }}
+                              className="rounded-md bg-bad px-2 py-0.5 text-xs font-semibold text-white hover:opacity-90"
+                            >
+                              Sí, eliminar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteUserId(null)}
+                              className="rounded-md bg-white px-2 py-0.5 text-xs font-semibold text-ink hover:bg-sand-2"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            aria-label={`Eliminar a ${u.name}`}
+                            onClick={() => setConfirmDeleteUserId(u.id)}
+                            className="inline-flex h-9 items-center justify-center rounded-[10px] px-2.5 text-stone hover:bg-bad-bg hover:text-bad"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        ))}
                     </div>
                   </td>
                 </tr>
@@ -1240,18 +1291,27 @@ export function AdminDirectoryView({
         />
       )}
 
-      {/* Edit User Modal */}
+      {/* Edit Resident Modal */}
       {editingUser && (
-        <EditUserModal
+        <EditResidentModal
           db={db}
           user={editingUser}
-          houses={db.houses}
+          house={editingUser.houseId ? houseMap.get(editingUser.houseId) ?? null : null}
           onClose={() => setEditingUser(null)}
           onSave={(patch) => {
             const err = onUpdateUser(editingUser.id, patch);
             if (!err) setEditingUser(null);
             return err;
           }}
+        />
+      )}
+
+      {/* Bulk Excel Import Modal */}
+      {showImportExcel && (
+        <ImportExcelModal
+          onClose={() => setShowImportExcel(false)}
+          onImport={onImportResidents}
+          onNotify={onNotify}
         />
       )}
 
@@ -1386,245 +1446,6 @@ function EditHouseModal({
   );
 }
 
-function EditUserModal({
-  db,
-  user,
-  houses,
-  onClose,
-  onSave,
-}: {
-  db: PortalDatabase;
-  user: PortalUser;
-  houses: House[];
-  onClose: () => void;
-  onSave: (patch: UpdateUserPatch) => string | null;
-}) {
-  const [name, setName] = useState(user.name);
-  const [phone, setPhone] = useState(user.phone ?? '');
-  const [role, setRole] = useState<UserRole>(user.role);
-  const [houseId, setHouseId] = useState(user.houseId ?? '');
-  const [carCount, setCarCount] = useState(String(user.carCount));
-  const [vehicles, setVehicles] = useState<VehicleDetailsInput[]>(() =>
-    resizeVehicleDrafts(
-      user.vehicleQrCodes.map((v) => ({
-        plate: v.plate ?? '',
-        color: v.color ?? '',
-        model: v.model ?? '',
-      })),
-      user.carCount,
-    ),
-  );
-  const [active, setActive] = useState(user.active);
-  const [error, setError] = useState<string | null>(null);
-
-  const otherUsage = getRoleUsage(db, user.id);
-  const treasurerFull = active && otherUsage.treasurer >= ROLE_LIMITS.treasurer;
-  const adminFull = active && otherUsage.admin >= ROLE_LIMITS.admin;
-
-  const handleCarCountChange = (raw: string) => {
-    setCarCount(raw);
-    const parsed = Math.max(0, Math.min(10, Number(raw) || 0));
-    setVehicles((prev) => resizeVehicleDrafts(prev, parsed));
-  };
-
-  const handleVehicleChange = (idx: number, field: keyof VehicleDetailsInput, value: string) => {
-    setVehicles((prev) =>
-      prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)),
-    );
-  };
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const parsedCars = Math.max(0, Math.min(10, Number(carCount) || 0));
-    const hasAnyVehicleDetail = vehicles.some(
-      (v) => Boolean(v.plate?.trim() || v.color?.trim() || v.model?.trim()),
-    );
-    const err = onSave({
-      name,
-      phone,
-      role,
-      houseId: houseId || null,
-      carCount: parsedCars,
-      vehicles: hasAnyVehicleDetail ? resizeVehicleDrafts(vehicles, parsedCars) : undefined,
-      active,
-    });
-    if (err) {
-      setError(err);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-[20px] border border-line bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-heading text-2xl font-semibold text-ink">Editar usuario</h3>
-          <button
-            type="button"
-            aria-label="Cerrar"
-            onClick={onClose}
-            className="flex size-9 items-center justify-center rounded-full text-stone hover:bg-sand-2"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-semibold text-ink">Nombre</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="h-11 rounded-[10px] border border-input px-3 text-base font-medium outline-none focus-visible:border-cantera"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-semibold text-ink">Número de teléfono</label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="442 123 4567"
-                className="h-11 rounded-[10px] border border-input px-3 text-base font-medium outline-none focus-visible:border-cantera"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-semibold text-ink">Rol</label>
-              <select
-                value={role}
-                onChange={(e) => {
-                  setRole(e.target.value as UserRole);
-                  if (error) setError(null);
-                }}
-                className="h-11 rounded-[10px] border border-input bg-white px-3 text-sm font-medium outline-none focus-visible:border-cantera"
-              >
-                <option value="resident">Vecino</option>
-                <option value="treasurer" disabled={treasurerFull}>
-                  Tesorería ({otherUsage.treasurer}/{ROLE_LIMITS.treasurer}
-                  {treasurerFull ? ' · Lleno' : ''})
-                </option>
-                <option value="admin" disabled={adminFull}>
-                  Mesa directiva ({otherUsage.admin}/{ROLE_LIMITS.admin}
-                  {adminFull ? ' · Lleno' : ''})
-                </option>
-                <option value="guard">Caseta</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-semibold text-ink">Número de autos</label>
-              <input
-                type="number"
-                min={0}
-                max={10}
-                value={carCount}
-                onChange={(e) => handleCarCountChange(e.target.value)}
-                className="h-11 rounded-[10px] border border-input px-3 text-base font-medium outline-none focus-visible:border-cantera"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-semibold text-ink">Casa asignada</label>
-            <select
-              value={houseId}
-              onChange={(e) => setHouseId(e.target.value)}
-              className="h-11 rounded-[10px] border border-input bg-white px-3 text-base font-medium outline-none focus-visible:border-cantera"
-            >
-              <option value="">Sin casa</option>
-              {houses.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {formatHouseLabel(h)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {vehicles.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-ink">
-                {vehicles.length === 1
-                  ? 'Datos del automóvil'
-                  : `Datos de los automóviles (${vehicles.length})`}
-              </span>
-              {vehicles.map((v, idx) => (
-                <div
-                  key={idx}
-                  className="flex flex-col gap-2 rounded-xl border border-line bg-sand/60 p-3"
-                >
-                  <span className="text-xs font-semibold text-cantera uppercase">
-                    Automóvil {idx + 1}
-                  </span>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <input
-                      value={v.plate ?? ''}
-                      onChange={(e) =>
-                        handleVehicleChange(idx, 'plate', e.target.value.toUpperCase())
-                      }
-                      placeholder="Placa"
-                      className="h-9 rounded-lg border border-input bg-white px-2.5 font-mono text-sm uppercase outline-none focus-visible:border-cantera"
-                    />
-                    <input
-                      value={v.color ?? ''}
-                      onChange={(e) => handleVehicleChange(idx, 'color', e.target.value)}
-                      placeholder="Color"
-                      className="h-9 rounded-lg border border-input bg-white px-2.5 text-sm outline-none focus-visible:border-cantera"
-                    />
-                    <input
-                      value={v.model ?? ''}
-                      onChange={(e) => handleVehicleChange(idx, 'model', e.target.value)}
-                      placeholder="Modelo"
-                      className="h-9 rounded-lg border border-input bg-white px-2.5 text-sm outline-none focus-visible:border-cantera"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <label className="flex items-center gap-2.5 text-sm font-medium text-ink">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(e) => {
-                setActive(e.target.checked);
-                if (error) setError(null);
-              }}
-              className="size-4 accent-[#8A641B]"
-            />
-            Usuario activo
-          </label>
-
-          {error && (
-            <p role="alert" className="rounded-xl bg-bad-bg px-3.5 py-2 text-sm font-medium text-bad">
-              {error}
-            </p>
-          )}
-
-          <div className="mt-2 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-11 rounded-xl border border-chip-line px-4 text-sm font-semibold text-ink hover:bg-sand-2"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="h-11 rounded-xl bg-cantera px-5 text-sm font-semibold text-white hover:bg-cantera-dark"
-            >
-              Guardar cambios
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 /* ==================== 8. BITÁCORA DE CAMBIOS ==================== */
 
