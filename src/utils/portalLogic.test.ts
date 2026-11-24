@@ -38,6 +38,7 @@ import {
   updateUserAccess,
   validateLoginInput,
   validateReceiptImageFile,
+  verifyStaticAdminCredentials,
 } from './portalLogic';
 
 test('formatMxnWhole and formatShortDateEs match Puerta Cantera Spanish formatting', () => {
@@ -812,5 +813,14 @@ test('parseCsvText, parseExcelResidentRows, and importResidentsBatch import vali
   ]);
   assert.ok(badHeaders.parseError?.includes('Nombre'));
 });
+
+test('verifyStaticAdminCredentials authorizes exclusively ADMON with puerta123 via PBKDF2-SHA256', async () => {
+  assert.equal(await verifyStaticAdminCredentials('ADMON', 'puerta123'), true);
+  assert.equal(await verifyStaticAdminCredentials(' admon ', 'puerta123'), true);
+  assert.equal(await verifyStaticAdminCredentials('ADMON', 'Puerta123'), false);
+  assert.equal(await verifyStaticAdminCredentials('ADMON', 'otra1234'), false);
+  assert.equal(await verifyStaticAdminCredentials('RES002', 'puerta123'), false);
+});
+
 
 

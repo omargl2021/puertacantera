@@ -391,12 +391,60 @@ export function formatHouseLabel(house: House | undefined | null): string {
 export function validateLoginInput(username: string, password: string): string | null {
   const trimmedUser = username.trim();
   if (trimmedUser.length < 2) {
-    return 'Ingresa un usuario válido (por ejemplo ADMON o tu correo/clave).';
+    return 'Ingresa un usuario válido (por ejemplo ADMON).';
   }
   if (password.trim().length < 4) {
     return 'Ingresa tu contraseña (mínimo 4 caracteres).';
   }
   return null;
+}
+
+const STATIC_ADMIN_PBKDF2_SALT = 'puerta_cantera_admon_pbkdf2_v1';
+const STATIC_ADMIN_PBKDF2_HASH =
+  '053a20476c537774b27ff8df59566809d3f7ad39188eeb3621ae56c3a6c75fce';
+
+function constantTimeHexEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Static-host fallback verification (e.g. GitHub Pages / static SPA builds without server.ts).
+ * Uses Web Crypto PBKDF2-SHA256 (100,000 iterations) with no plaintext secret in source.
+ * Live cloud database access remains protected server-side by Firebase Auth + Firestore Security Rules.
+ */
+export async function verifyStaticAdminCredentials(
+  username: string,
+  password: string,
+): Promise<boolean> {
+  if (username.trim().toUpperCase() !== 'ADMON') return false;
+  if (!globalThis.crypto?.subtle) return false;
+  const enc = new TextEncoder();
+  const keyMaterial = await globalThis.crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const bits = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: enc.encode(STATIC_ADMIN_PBKDF2_SALT),
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    256,
+  );
+  const derivedHex = Array.from(new Uint8Array(bits))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return constantTimeHexEqual(derivedHex, STATIC_ADMIN_PBKDF2_HASH);
 }
 
 export function validateRecoveryEmail(email: string): string | null {

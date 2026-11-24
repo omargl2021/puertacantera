@@ -59,6 +59,7 @@ import {
   updateFeeSchedule,
   updateHouse,
   updateUserAccess,
+  verifyStaticAdminCredentials,
   type ExcelImportBatchResult,
   type ParsedExcelResidentRow,
 } from './utils/portalLogic';
@@ -247,7 +248,23 @@ export default function App() {
     }
   };
 
+  const completeAdminSignIn = (token: string | null): string | null => {
+    const adminUser =
+      dbRef.current.users.find((u) => isPrimaryAdminUser(u)) ??
+      dbRef.current.users.find((u) => u.role === 'admin');
+    if (!adminUser) {
+      return 'No se encontró la cuenta del administrador.';
+    }
+    setAuthToken(token);
+    setCurrentUserId(adminUser.id);
+    setPrevRoute('/login');
+    setRoute('/');
+    showToast('Bienvenido administrador (ADMON).');
+    return null;
+  };
+
   const handleLogin = async (username: string, password: string): Promise<string | null> => {
+    let backendUnavailable = false;
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -259,36 +276,34 @@ export default function App() {
       const isJson = contentType.includes('application/json');
 
       if (response.status === 404 || response.status === 405 || !isJson) {
-        return 'No se encontró el servidor de autenticación. Abre la aplicación desde su servidor activo (npm start).';
+        backendUnavailable = true;
+      } else {
+        const data = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          isAdmin?: boolean;
+          token?: string;
+          error?: string;
+        };
+
+        if (!response.ok || !data.ok || !data.isAdmin || !data.token) {
+          return data.error || 'Usuario o contraseña incorrectos.';
+        }
+
+        return completeAdminSignIn(data.token);
       }
-
-      const data = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        isAdmin?: boolean;
-        token?: string;
-        error?: string;
-      };
-
-      if (!response.ok || !data.ok || !data.isAdmin || !data.token) {
-        return data.error || 'Usuario o contraseña incorrectos.';
-      }
-
-      const adminUser =
-        dbRef.current.users.find((u) => isPrimaryAdminUser(u)) ??
-        dbRef.current.users.find((u) => u.role === 'admin');
-      if (!adminUser) {
-        return 'No se encontró la cuenta del administrador.';
-      }
-
-      setAuthToken(data.token);
-      setCurrentUserId(adminUser.id);
-      setPrevRoute('/login');
-      setRoute('/');
-      showToast('Bienvenido administrador (ADMON).');
-      return null;
     } catch {
-      return 'No se pudo verificar el acceso con el servidor.';
+      backendUnavailable = true;
     }
+
+    if (backendUnavailable) {
+      const validStatic = await verifyStaticAdminCredentials(username, password);
+      if (!validStatic) {
+        return 'Usuario o contraseña incorrectos.';
+      }
+      return completeAdminSignIn(null);
+    }
+
+    return 'Usuario o contraseña incorrectos.';
   };
 
   const handleLogout = () => {
