@@ -1,18 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import {
   Car,
-  Cloud,
-  CloudCheck,
   FileSpreadsheet,
-  Flag,
-  LogOut,
   Pencil,
   Printer,
   QrCode,
   Search,
   Settings2,
   Trash2,
-  UserPlus,
   UserRoundPlus,
   UserSearch,
   X,
@@ -39,7 +34,6 @@ import {
   type ParsedExcelResidentRow,
   type UpdateUserPatch,
 } from '../utils/portalLogic';
-import { BrandMark } from './BrandMark';
 import { EditResidentModal } from './EditResidentModal';
 import { EntryPassModal } from './EntryPassModal';
 import { ImportExcelModal } from './ImportExcelModal';
@@ -48,10 +42,8 @@ import { QrCodeSvg } from './QrCodeSvg';
 interface ResidentHomeProps {
   db: PortalDatabase;
   user: PortalUser;
-  cloudConnected: boolean;
-  onConnectCloud: () => void;
   onNavigate: (route: AppRoute) => void;
-  onLogout: () => void;
+  onLogout?: () => void;
   onAddResident: (input: InviteUserInput) => { user?: PortalUser; error: string | null };
   onImportResidents: (rows: ParsedExcelResidentRow[]) => ExcelImportBatchResult;
   onUpdateResident: (userId: string, patch: UpdateUserPatch) => string | null;
@@ -71,10 +63,7 @@ function resizeVehicleDrafts(
 export function ResidentHome({
   db,
   user,
-  cloudConnected,
-  onConnectCloud,
   onNavigate,
-  onLogout,
   onAddResident,
   onImportResidents,
   onUpdateResident,
@@ -198,52 +187,8 @@ export function ResidentHome({
   return (
     <div className="w-full md:px-6 md:pt-5 lg:px-8 lg:pt-6">
       <header className="relative overflow-hidden border-b border-gold/25 bg-gradient-to-b from-[#1D1813] via-night to-[#221C15] px-5 pt-[max(env(safe-area-inset-top),2.25rem)] pb-7 md:rounded-[28px] md:border md:border-gold/25 md:px-8 md:pt-7 md:pb-8 md:shadow-[0_18px_40px_rgba(23,20,17,0.16)]">
-        <div className="flex items-center justify-between gap-2">
-          <div className="lg:hidden">
-            <BrandMark variant="light" width={114} />
-          </div>
-          <div className="hidden text-xs font-semibold tracking-[0.16em] text-gold-light/75 uppercase lg:block">
-            Puerta Cantera Residencial
-          </div>
-
-          <div className="flex items-center gap-2">
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={onConnectCloud}
-                className={`inline-flex h-10 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold whitespace-nowrap transition-colors ${
-                  cloudConnected
-                    ? 'border-emerald-400/45 bg-emerald-500/15 text-emerald-200'
-                    : 'border-gold/40 bg-gold/12 text-gold-light hover:border-gold/75 hover:bg-gold/20'
-                }`}
-              >
-                {cloudConnected ? (
-                  <CloudCheck className="size-3.5 text-emerald-300" />
-                ) : (
-                  <Cloud className="size-3.5 text-gold" />
-                )}
-                <span className="hidden sm:inline">
-                  {cloudConnected ? 'Nube activa' : 'Conectar nube'}
-                </span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={onLogout}
-              className="inline-flex h-10 items-center gap-1.5 rounded-full border border-gold/30 bg-white/[0.04] px-3.5 text-xs font-semibold whitespace-nowrap text-gold-light transition-colors hover:border-gold/60 hover:bg-gold/15"
-            >
-              <LogOut className="size-3.5 text-gold" />
-              Cerrar sesión
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-[14px] font-medium tracking-[0.04em] text-gold-light/75">
-              Bienvenido residente{' '}
-            </span>
             <h1 className="font-heading text-[34px] leading-[1.05] font-semibold tracking-tight text-white md:text-[40px]">
               {user.name}
             </h1>
@@ -262,54 +207,12 @@ export function ResidentHome({
         </div>
       </header>
 
-      {/* Quick Actions — Admin gets all 7 controls; non-admin gets strictly personal resident actions */}
+      {/* Quick Actions — Reorganized 5 controls for admin (2 for non-admin) */}
       <section
         className={`grid gap-2.5 px-4 pt-6 pb-8 md:px-0 ${
-          isAdmin ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7' : 'grid-cols-2 sm:grid-cols-4'
+          isAdmin ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2'
         }`}
       >
-        <button
-          type="button"
-          onClick={() => onNavigate('/visitas')}
-          className="group flex flex-col items-center justify-center gap-2 rounded-[16px] border border-line bg-white px-2 py-3 text-center transition-all duration-150 hover:border-gold/55 hover:shadow-[0_8px_22px_rgba(138,100,27,0.10)] active:translate-y-px"
-        >
-          <span className="flex size-10 items-center justify-center rounded-xl border border-gold/25 bg-cantera-soft text-cantera transition-colors group-hover:bg-cantera group-hover:text-white">
-            <UserPlus className="size-[18px]" />
-          </span>
-          <span className="text-[12px] leading-[1.2] font-semibold text-ink">
-            Nueva <br />
-            visita
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onNavigate('/reportes')}
-          className="group flex flex-col items-center justify-center gap-2 rounded-[16px] border border-line bg-white px-2 py-3 text-center transition-all duration-150 hover:border-gold/55 hover:shadow-[0_8px_22px_rgba(138,100,27,0.10)] active:translate-y-px"
-        >
-          <span className="flex size-10 items-center justify-center rounded-xl border border-gold/25 bg-cantera-soft text-cantera transition-colors group-hover:bg-cantera group-hover:text-white">
-            <Flag className="size-[18px]" />
-          </span>
-          <span className="text-[12px] leading-[1.2] font-semibold text-ink">
-            Reportar <br />
-            incidencia
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onNavigate('/visitas')}
-          className="group flex flex-col items-center justify-center gap-2 rounded-[16px] border border-line bg-white px-2 py-3 text-center transition-all duration-150 hover:border-gold/55 hover:shadow-[0_8px_22px_rgba(138,100,27,0.10)] active:translate-y-px"
-        >
-          <span className="flex size-10 items-center justify-center rounded-xl border border-gold/25 bg-cantera-soft text-cantera transition-colors group-hover:bg-cantera group-hover:text-white">
-            <QrCode className="size-[18px]" />
-          </span>
-          <span className="text-[12px] leading-[1.2] font-semibold text-ink">
-            Mis <br />
-            pases
-          </span>
-        </button>
-
         {isAdmin && (
           <>
             <button
@@ -371,6 +274,22 @@ export function ResidentHome({
           <span className="text-[12px] leading-[1.2] font-semibold text-ink">
             Imprimir <br />
             corbatín
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('/visitas')}
+          className={`group flex flex-col items-center justify-center gap-2 rounded-[16px] border border-line bg-white px-2 py-3 text-center transition-all duration-150 hover:border-gold/55 hover:shadow-[0_8px_22px_rgba(138,100,27,0.10)] active:translate-y-px ${
+            isAdmin ? 'col-span-2 sm:col-span-1' : ''
+          }`}
+        >
+          <span className="flex size-10 items-center justify-center rounded-xl border border-gold/25 bg-cantera-soft text-cantera transition-colors group-hover:bg-cantera group-hover:text-white">
+            <QrCode className="size-[18px]" />
+          </span>
+          <span className="text-[12px] leading-[1.2] font-semibold text-ink">
+            Mis <br />
+            pases
           </span>
         </button>
       </section>

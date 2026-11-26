@@ -415,7 +415,6 @@ function constantTimeHexEqual(a: string, b: string): boolean {
 /**
  * Static-host fallback verification (e.g. GitHub Pages / static SPA builds without server.ts).
  * Uses Web Crypto PBKDF2-SHA256 (100,000 iterations) with no plaintext secret in source.
- * Live cloud database access remains protected server-side by Firebase Auth + Firestore Security Rules.
  */
 export async function verifyStaticAdminCredentials(
   username: string,

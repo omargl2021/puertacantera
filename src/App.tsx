@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { CheckCircle2 } from 'lucide-react';
 import {
   AdminAuditLogView,
@@ -28,23 +27,23 @@ import {
 import { ResidentQrScanModal } from './components/ResidentQrScanModal';
 import { ResidentShell } from './components/ResidentShell';
 import { SEED_DATABASE } from './data/seedData';
-import { FIREBASE_BOOTSTRAP_ADMIN_EMAIL, firebaseAuth } from './firebase';
 import {
-  completePendingGoogleRedirect,
-  formatFirebaseSyncErrorEs,
-  isFirebaseBootstrapAdmin,
-  signInWithGoogleCloud,
-  signOutGoogleCloud,
-  subscribeToFirestoreDatabase,
-  syncDatabaseChangesToFirestore,
-  syncLocalRecordsToFirestore,
-} from './services/firestoreSync';
+  deleteSupabaseUser,
+  fetchSupabaseRecords,
+  fetchSupabaseStatus,
+  recordSupabaseAcceso,
+  syncAllToSupabase,
+  syncSupabaseUser,
+  updateSupabaseViviendaAlCorriente,
+  type SupabaseConnectionStatus,
+} from './services/supabaseSync';
 import type { AppRoute, PortalDatabase, PortalUser, ScannedResidentData } from './types/portal';
 import {
   addHouse,
   cancelVisitPass,
   checkInVisitPass,
   commentAndUpdateReport,
+  computeHouseBalance,
   createReport,
   createVisitPass,
   DEFAULT_NOW_ISO,
@@ -66,6 +65,7 @@ import {
   type ExcelImportBatchResult,
   type ParsedExcelResidentRow,
 } from './utils/portalLogic';
+import { mergeSupabaseSnapshotIntoDb } from './utils/supabaseMapper';
 
 const DB_STORAGE_KEY = 'puerta_cantera_v2_db';
 
@@ -130,13 +130,13 @@ export default function App() {
   const initialSession = useRef(getInitialSession(db));
   const [currentUserId, setCurrentUserId] = useState<string | null>(initialSession.current.userId);
   const [authToken, setAuthToken] = useState<string | null>(null);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [route, setRoute] = useState<AppRoute>(initialSession.current.route);
   const [prevRoute, setPrevRoute] = useState<AppRoute>('/login');
   const [scannedResident, setScannedResident] = useState<ScannedResidentData | null>(() =>
     parseResidentQrScanParams(window.location.search, db, window.location.origin),
   );
   const [toast, setToast] = useState<string | null>(null);
+  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseConnectionStatus | null>(null);
   const toastTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -157,7 +157,7 @@ export default function App() {
     }
   };
 
-  // Persist local cache as offline mirror while cloud Firestore syncs in real time
+  // Persist database changes in browser localStorage
   useEffect(() => {
     try {
       window.localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(db));
@@ -165,47 +165,6 @@ export default function App() {
       // Ignore storage quota errors
     }
   }, [db]);
-
-  // Listen for Firebase Auth state & activate real-time Firestore cloud database listeners
-  useEffect(() => {
-    let active = true;
-    let unsubFirestore: (() => void) | null = null;
-
-    void completePendingGoogleRedirect();
-
-    const unsubAuth = onAuthStateChanged(firebaseAuth, (fbUser) => {
-      if (unsubFirestore) {
-        unsubFirestore();
-        unsubFirestore = null;
-      }
-      setFirebaseUser(fbUser);
-
-      if (fbUser && isFirebaseBootstrapAdmin(fbUser)) {
-        // Upload any local records missing in Firestore BEFORE attaching snapshot listeners
-        // so offline/Excel-imported residents are synced to cloud instead of overwritten.
-        void syncLocalRecordsToFirestore(dbRef.current, fbUser)
-          .catch((error) => {
-            if (active) showToast(formatFirebaseSyncErrorEs(error), 7000);
-          })
-          .finally(() => {
-            if (!active || firebaseAuth.currentUser?.uid !== fbUser.uid) return;
-            unsubFirestore = subscribeToFirestoreDatabase(
-              fbUser,
-              (patch) => {
-                setDb((prev) => normalizePortalDatabase({ ...prev, ...patch }));
-              },
-              (msg) => showToast(msg, 7000),
-            );
-          });
-      }
-    });
-
-    return () => {
-      active = false;
-      if (unsubFirestore) unsubFirestore();
-      unsubAuth();
-    };
-  }, []);
 
   useEffect(() => {
     document.title = ROUTE_TITLES[route] ?? 'Puerta Cantera';
@@ -216,17 +175,47 @@ export default function App() {
     ? db.users.find((u) => u.id === currentUserId) ?? null
     : null;
 
-  const cloudReady = Boolean(firebaseUser && isFirebaseBootstrapAdmin(firebaseUser));
-
   const commitDbChange = (nextDb: PortalDatabase) => {
-    const prevDb = dbRef.current;
     dbRef.current = nextDb;
     setDb(nextDb);
-    if (firebaseUser && isFirebaseBootstrapAdmin(firebaseUser)) {
-      void syncDatabaseChangesToFirestore(prevDb, nextDb, firebaseUser).catch((error) => {
-        showToast(`Guardado localmente. ${formatFirebaseSyncErrorEs(error)}`, 7000);
-      });
+  };
+
+  const refreshSupabaseData = async (token: string | null) => {
+    const status = await fetchSupabaseStatus(token);
+    setSupabaseStatus(status);
+    if (!status.configured) return;
+    const records = await fetchSupabaseRecords(token);
+    if (records.snapshot) {
+      const merged = mergeSupabaseSnapshotIntoDb(dbRef.current, records.snapshot);
+      commitDbChange(merged);
     }
+  };
+
+  useEffect(() => {
+    if (!currentUserId || !isAdminUser(currentUser)) return;
+    void refreshSupabaseData(authToken);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId, authToken]);
+
+  const handleOpenQrScan = (data: ScannedResidentData) => {
+    setScannedResident(data);
+    void recordSupabaseAcceso(
+      authToken,
+      data.residentKey,
+      data.code,
+      'escaneo_qr',
+      `${data.name} · ${data.vehicleLabel}${data.plate ? ` (${data.plate})` : ''}`,
+    ).then((created) => {
+      if (created) {
+        commitDbChange({
+          ...dbRef.current,
+          supabaseRegistrosAcceso: [
+            created,
+            ...(dbRef.current.supabaseRegistrosAcceso ?? []),
+          ].slice(0, 200),
+        });
+      }
+    });
   };
 
   const navigate = (nextRoute: AppRoute) => {
@@ -237,45 +226,6 @@ export default function App() {
     }
     setPrevRoute(route);
     setRoute(nextRoute);
-  };
-
-  const handleConnectCloud = async () => {
-    if (!isAdminUser(currentUser)) {
-      showToast('Solo el administrador puede sincronizar la base de datos en la nube.');
-      return;
-    }
-    if (firebaseUser && isFirebaseBootstrapAdmin(firebaseUser)) {
-      try {
-        const summary = await syncLocalRecordsToFirestore(dbRef.current, firebaseUser);
-        showToast(
-          summary.uploadedCount > 0
-            ? `Sincronizado con Firebase (${summary.uploadedCount} registros subidos · ${summary.cloudResidentsCount} residentes en nube).`
-            : `Firebase Firestore al día (${summary.cloudResidentsCount} residentes en nube).`,
-        );
-      } catch (error) {
-        showToast(formatFirebaseSyncErrorEs(error), 7000);
-      }
-      return;
-    }
-    try {
-      const fbUser = await signInWithGoogleCloud();
-      if (!isFirebaseBootstrapAdmin(fbUser)) {
-        await signOutGoogleCloud().catch(() => {});
-        showToast(
-          `Usa la cuenta de Google autorizada (${FIREBASE_BOOTSTRAP_ADMIN_EMAIL}) para sincronizar Firebase.`,
-          7000,
-        );
-        return;
-      }
-      const summary = await syncLocalRecordsToFirestore(dbRef.current, fbUser);
-      showToast(
-        summary.uploadedCount > 0
-          ? `Conectado a Firebase (${summary.uploadedCount} registros subidos · ${summary.cloudResidentsCount} residentes en nube).`
-          : `Conectado a Firebase Firestore (${summary.cloudResidentsCount} residentes en nube).`,
-      );
-    } catch (error) {
-      showToast(formatFirebaseSyncErrorEs(error), 7000);
-    }
   };
 
   const completeAdminSignIn = (token: string | null): string | null => {
@@ -388,6 +338,18 @@ export default function App() {
   const isAdminRoute = route.startsWith('/admin') && userIsAdmin;
   const pendingPaymentsCount = db.payments.filter((p) => p.status === 'pending').length;
 
+  const handleSyncSupabase = async () => {
+    const res = await syncAllToSupabase(authToken, dbRef.current);
+    if (!res.ok) {
+      showToast(res.error || 'No se pudo sincronizar con Supabase.');
+      return;
+    }
+    await refreshSupabaseData(authToken);
+    showToast(
+      `Supabase sincronizado (${res.synced?.viviendas ?? 0} viviendas, ${res.synced?.vehiculos ?? 0} vehículos, ${res.synced?.marbetes ?? 0} marbetes).`,
+    );
+  };
+
   const handleAdminAddResident = (input: Parameters<typeof inviteUser>[1]) => {
     if (!userIsAdmin) {
       return { error: 'Solo el administrador puede agregar residentes.' };
@@ -395,6 +357,11 @@ export default function App() {
     const res = inviteUser(dbRef.current, input, currentUser.name, nowIso());
     if (res.error) return { error: res.error };
     commitDbChange(res.db);
+    if (res.user) {
+      void syncSupabaseUser(authToken, res.db, res.user).then((syncRes) => {
+        if (syncRes.ok) void fetchSupabaseStatus(authToken).then(setSupabaseStatus);
+      });
+    }
     const cars = res.user?.carCount ?? 0;
     const keyTag = res.user?.residentKey ? ` (${res.user.residentKey})` : '';
     showToast(
@@ -415,6 +382,12 @@ export default function App() {
     const res = updateUserAccess(dbRef.current, userId, patch, currentUser.name, nowIso());
     if (res.error) return res.error;
     commitDbChange(res.db);
+    const updatedUser = res.db.users.find((u) => u.id === userId);
+    if (updatedUser) {
+      void syncSupabaseUser(authToken, res.db, updatedUser).then((syncRes) => {
+        if (syncRes.ok) void fetchSupabaseStatus(authToken).then(setSupabaseStatus);
+      });
+    }
     showToast('Datos del residente actualizados.');
     return null;
   };
@@ -437,6 +410,9 @@ export default function App() {
     const res = importResidentsBatch(dbRef.current, rows, currentUser.name, nowIso());
     if (res.added.length > 0) {
       commitDbChange(res.db);
+      void syncAllToSupabase(authToken, res.db).then((syncRes) => {
+        if (syncRes.ok) void fetchSupabaseStatus(authToken).then(setSupabaseStatus);
+      });
       showToast(
         res.skipped.length > 0
           ? `${res.added.length} residentes importados (${res.skipped.length} omitidos).`
@@ -454,9 +430,15 @@ export default function App() {
     if (!userIsAdmin) {
       return 'Solo el administrador puede eliminar residentes.';
     }
+    const targetUser = dbRef.current.users.find((u) => u.id === userId) ?? null;
     const res = deleteResident(dbRef.current, userId, currentUser.name, nowIso());
     if (res.error) return res.error;
     commitDbChange(res.db);
+    if (targetUser) {
+      void deleteSupabaseUser(authToken, targetUser).then((delRes) => {
+        if (delRes.ok) void fetchSupabaseStatus(authToken).then(setSupabaseStatus);
+      });
+    }
     showToast('Residente eliminado del padrón.');
     return null;
   };
@@ -484,6 +466,22 @@ export default function App() {
                 );
                 if (res.error) return res.error;
                 commitDbChange(res.db);
+                const payment = res.db.payments.find((p) => p.id === paymentId);
+                const paidHouse = payment
+                  ? res.db.houses.find((h) => h.id === payment.houseId) ?? null
+                  : null;
+                if (payment && paidHouse) {
+                  const balance = computeHouseBalance(
+                    paidHouse,
+                    res.db.feeHistory,
+                    res.db.payments,
+                  );
+                  void updateSupabaseViviendaAlCorriente(
+                    authToken,
+                    payment.houseId,
+                    balance.status === 'ok',
+                  );
+                }
                 showToast(
                   decision === 'approved'
                     ? 'Pago aprobado y acreditado.'
@@ -556,6 +554,8 @@ export default function App() {
           {route === '/admin/padron' && (
             <AdminDirectoryView
               db={db}
+              supabaseStatus={supabaseStatus}
+              onSyncSupabase={handleSyncSupabase}
               onAddHouse={(input) => {
                 const res = addHouse(dbRef.current, input, currentUser.name, nowIso());
                 if (res.error) return res.error;
@@ -567,6 +567,10 @@ export default function App() {
                 const res = updateHouse(dbRef.current, houseId, patch, currentUser.name, nowIso());
                 if (res.error) return res.error;
                 commitDbChange(res.db);
+                const linkedUsers = res.db.users.filter((u) => u.houseId === houseId);
+                for (const lu of linkedUsers) {
+                  void syncSupabaseUser(authToken, res.db, lu);
+                }
                 showToast('Casa actualizada.');
                 return null;
               }}
@@ -574,7 +578,7 @@ export default function App() {
               onImportResidents={handleAdminImportResidents}
               onUpdateUser={handleAdminUpdateResident}
               onDeleteUser={handleAdminDeleteResident}
-              onScanQr={setScannedResident}
+              onScanQr={handleOpenQrScan}
               onNotify={showToast}
             />
           )}
@@ -584,7 +588,7 @@ export default function App() {
               db={db}
               user={currentUser}
               isAdminLayout
-              onScanQr={setScannedResident}
+              onScanQr={handleOpenQrScan}
               onNotify={showToast}
             />
           )}
@@ -606,8 +610,6 @@ export default function App() {
       <ResidentShell
         currentRoute={effectiveResidentRoute}
         user={currentUser}
-        cloudConnected={cloudReady}
-        onConnectCloud={handleConnectCloud}
         onNavigate={navigate}
         onLogout={handleLogout}
       >
@@ -615,15 +617,13 @@ export default function App() {
           <ResidentHome
             db={db}
             user={currentUser}
-            cloudConnected={cloudReady}
-            onConnectCloud={handleConnectCloud}
             onNavigate={navigate}
             onLogout={handleLogout}
             onAddResident={handleAdminAddResident}
             onImportResidents={handleAdminImportResidents}
             onUpdateResident={handleAdminUpdateResident}
             onDeleteResident={handleAdminDeleteResident}
-            onScanQr={setScannedResident}
+            onScanQr={handleOpenQrScan}
             onNotify={showToast}
           />
         )}
@@ -633,7 +633,7 @@ export default function App() {
             db={db}
             user={currentUser}
             onNavigate={navigate}
-            onScanQr={setScannedResident}
+            onScanQr={handleOpenQrScan}
             onNotify={showToast}
           />
         )}
@@ -658,7 +658,7 @@ export default function App() {
                 'En Safari o Chrome usa "Agregar a pantalla de inicio" para instalar la app.',
               );
             }}
-            onScanQr={setScannedResident}
+            onScanQr={handleOpenQrScan}
             onNotify={showToast}
             onLogout={handleLogout}
           />

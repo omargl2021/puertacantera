@@ -40,6 +40,13 @@ import {
   validateReceiptImageFile,
   verifyStaticAdminCredentials,
 } from './portalLogic';
+import {
+  buildSupabaseBundleForUser,
+  computeMarbeteFolio,
+  isUuid,
+  mergeSupabaseSnapshotIntoDb,
+  toDeterministicUuid,
+} from './supabaseMapper';
 
 test('formatMxnWhole and formatShortDateEs match Puerta Cantera Spanish formatting', () => {
   assert.equal(formatMxnWhole(400), '$400');
@@ -822,5 +829,47 @@ test('verifyStaticAdminCredentials authorizes exclusively ADMON with puerta123 v
   assert.equal(await verifyStaticAdminCredentials('RES002', 'puerta123'), false);
 });
 
+test('Supabase mapper builds linked viviendas, vehiculos, marbetes with valid UUIDs and round-trips snapshots', () => {
+  const daniel = SEED_DATABASE.users.find((u) => u.residentKey === 'RES002');
+  assert.ok(daniel);
 
+  const bundle = buildSupabaseBundleForUser(SEED_DATABASE, daniel, '2026-11-26');
+  assert.equal(isUuid(bundle.vivienda.id), true);
+  assert.equal(bundle.vivienda.residente_titular, 'Daniel Cruz');
+  assert.equal(bundle.vivienda.calle, 'De Las Flores');
+  assert.equal(bundle.vivienda.numero_exterior, '389');
+  assert.equal(bundle.vehiculos.length, daniel.vehicleQrCodes.length);
+  assert.equal(bundle.marbetes.length, daniel.vehicleQrCodes.length);
+  assert.equal(isUuid(bundle.marbetes[0].codigo_qr), true);
+  assert.equal(bundle.marbetes[0].folio, computeMarbeteFolio('RES002', 1));
+  assert.equal(bundle.marbetes[0].vehiculo_id, bundle.vehiculos[0].id);
+  assert.equal(bundle.vehiculos[0].vivienda_id, bundle.vivienda.id);
 
+  // Deterministic UUID generation is stable
+  assert.equal(
+    toDeterministicUuid('marbete:RES002:PC-A1-100001'),
+    toDeterministicUuid('marbete:RES002:PC-A1-100001'),
+  );
+
+  // Round-trip merge from Supabase snapshot hydrates houses, users, and registros_acceso
+  const merged = mergeSupabaseSnapshotIntoDb(SEED_DATABASE, {
+    viviendas: [bundle.vivienda],
+    vehiculos: bundle.vehiculos,
+    marbetes: bundle.marbetes,
+    registros_acceso: [
+      {
+        id: toDeterministicUuid('reg-1'),
+        marbete_id: bundle.marbetes[0].id,
+        tipo_movimiento: 'escaneo_qr',
+        fecha_hora: '2026-11-26T18:00:00Z',
+        guardia_id: null,
+        observaciones: 'Daniel Cruz · Auto 1',
+      },
+    ],
+  });
+
+  const mergedDaniel = merged.users.find((u) => u.residentKey === 'RES002');
+  assert.ok(mergedDaniel);
+  assert.equal(mergedDaniel.name, 'Daniel Cruz');
+  assert.equal(merged.supabaseRegistrosAcceso?.length, 1);
+});

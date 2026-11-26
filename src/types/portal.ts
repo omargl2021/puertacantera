@@ -214,6 +214,55 @@ export interface CorbatinItem {
   vehicle: VehicleQrCode;
 }
 
+export interface SupabaseViviendaRow {
+  id: string;
+  residente_titular: string;
+  calle: string;
+  numero_exterior: string;
+  numero_interior: string | null;
+  telefono: string | null;
+  tipo_residente: string;
+  al_corriente: boolean;
+  created_at: string;
+}
+
+export interface SupabaseVehiculoRow {
+  id: string;
+  vivienda_id: string;
+  placas: string;
+  created_at: string;
+  marca: string | null;
+  modelo: string | null;
+  color: string | null;
+}
+
+export interface SupabaseMarbeteRow {
+  id: string;
+  folio: number;
+  codigo_qr: string;
+  vehiculo_id: string;
+  estatus: string;
+  fecha_emision: string;
+  fecha_vencimiento: string | null;
+  notas: string | null;
+}
+
+export interface SupabaseRegistroAccesoRow {
+  id: string;
+  marbete_id: string;
+  tipo_movimiento: string;
+  fecha_hora: string;
+  guardia_id: string | null;
+  observaciones: string | null;
+}
+
+export interface SupabaseSyncSnapshot {
+  viviendas: SupabaseViviendaRow[];
+  vehiculos: SupabaseVehiculoRow[];
+  marbetes: SupabaseMarbeteRow[];
+  registros_acceso: SupabaseRegistroAccesoRow[];
+}
+
 export interface PortalDatabase {
   houses: House[];
   users: PortalUser[];
@@ -225,4 +274,5 @@ export interface PortalDatabase {
   passes: VisitPass[];
   auditLog: AuditLogEntry[];
   pushEnabled: boolean;
+  supabaseRegistrosAcceso?: SupabaseRegistroAccesoRow[];
 }

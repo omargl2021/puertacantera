@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { Car, FileSpreadsheet, Pencil, Pin, QrCode, Trash2, X } from 'lucide-react';
+import { Car, Database, FileSpreadsheet, Pencil, Pin, QrCode, RefreshCw, Trash2, X } from 'lucide-react';
+import type { SupabaseConnectionStatus } from '../services/supabaseSync';
+import { toDeterministicUuid } from '../utils/supabaseMapper';
 import { EditResidentModal } from './EditResidentModal';
 import { EntryPassModal } from './EntryPassModal';
 import { ImportExcelModal } from './ImportExcelModal';
@@ -562,6 +564,64 @@ export function AdminVisitsLogView({ db }: AdminVisitsLogViewProps) {
           </table>
         </div>
       )}
+
+      {/* Registros de acceso por marbete QR (Supabase registros_acceso) */}
+      <section className="flex flex-col gap-3 pt-2">
+        <h2 className="font-heading text-2xl font-semibold text-ink">
+          Accesos por marbete QR (Supabase)
+        </h2>
+        {(db.supabaseRegistrosAcceso ?? []).length === 0 ? (
+          <div className="flex flex-col items-center gap-1 rounded-2xl border border-dashed border-chip-line bg-white/60 px-4 py-8 text-center">
+            <p className="text-sm font-semibold text-ink">Sin registros de marbetes</p>
+            <p className="text-xs text-stone">
+              Cada escaneo de código QR de marbete se registra en la tabla registros_acceso.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-[14px] border border-line bg-white">
+            <table className="w-full min-w-[600px] text-left text-[15px]">
+              <thead className="border-b border-line bg-sand-2 text-[13px] font-semibold tracking-[0.06em] text-stone uppercase">
+                <tr>
+                  <th className="px-4 py-3">Movimiento</th>
+                  <th className="px-4 py-3">Residente / Vehículo</th>
+                  <th className="px-4 py-3">Observaciones</th>
+                  <th className="px-4 py-3">Fecha y hora</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(db.supabaseRegistrosAcceso ?? []).map((reg) => {
+                  const matchedOwner = db.users.find((u) =>
+                    u.vehicleQrCodes.some(
+                      (v) => toDeterministicUuid(`marbete:${u.residentKey}:${v.code}`) === reg.marbete_id,
+                    ),
+                  );
+                  const matchedVehicle = matchedOwner?.vehicleQrCodes.find(
+                    (v) =>
+                      toDeterministicUuid(`marbete:${matchedOwner.residentKey}:${v.code}`) ===
+                      reg.marbete_id,
+                  );
+                  return (
+                    <tr key={reg.id} className="border-b border-line last:border-0">
+                      <td className="px-4 py-2.5 font-semibold capitalize">
+                        {reg.tipo_movimiento.replace('_', ' ')}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {matchedOwner
+                          ? `${matchedOwner.name}${matchedVehicle?.plate ? ` · ${matchedVehicle.plate}` : ''}`
+                          : reg.marbete_id.slice(0, 8)}
+                      </td>
+                      <td className="px-4 py-2.5 text-stone">{reg.observaciones || '—'}</td>
+                      <td className="px-4 py-2.5 text-stone">
+                        {formatAuditTimestamp(reg.fecha_hora)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </>
   );
 }
@@ -570,6 +630,8 @@ export function AdminVisitsLogView({ db }: AdminVisitsLogViewProps) {
 
 interface AdminDirectoryViewProps {
   db: PortalDatabase;
+  supabaseStatus?: SupabaseConnectionStatus | null;
+  onSyncSupabase?: () => Promise<void>;
   onAddHouse: (input: AddHouseInput) => string | null;
   onUpdateHouse: (
     houseId: string,
@@ -593,6 +655,8 @@ function resizeVehicleDrafts(
 
 export function AdminDirectoryView({
   db,
+  supabaseStatus,
+  onSyncSupabase,
   onAddHouse,
   onUpdateHouse,
   onInviteUser,
@@ -602,6 +666,7 @@ export function AdminDirectoryView({
   onScanQr,
   onNotify,
 }: AdminDirectoryViewProps) {
+  const [syncingSupabase, setSyncingSupabase] = useState(false);
   // Invite / Register user form
   const [invEmail, setInvEmail] = useState('');
   const [invName, setInvName] = useState('');
@@ -717,15 +782,39 @@ export function AdminDirectoryView({
           <h1 className="font-heading text-[34px] leading-none font-semibold text-ink">
             Vecinos y casas
           </h1>
+          {supabaseStatus?.configured && (
+            <span className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-stone">
+              <Database className="size-3.5 text-cantera" />
+              {supabaseStatus.connected
+                ? `Supabase vinculado (${supabaseStatus.counts?.viviendas ?? 0} viviendas · ${supabaseStatus.counts?.vehiculos ?? 0} vehículos · ${supabaseStatus.counts?.marbetes ?? 0} marbetes)`
+                : 'Supabase pendiente de conexión'}
+            </span>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={() => setShowImportExcel(true)}
-          className="inline-flex h-11 items-center gap-2 rounded-xl border border-gold/45 bg-night px-4 text-sm font-semibold text-gold-light shadow-sm transition-colors hover:bg-cantera hover:text-white"
-        >
-          <FileSpreadsheet className="size-4 text-gold" />
-          Importar Excel
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {onSyncSupabase && (
+            <button
+              type="button"
+              disabled={syncingSupabase}
+              onClick={() => {
+                setSyncingSupabase(true);
+                void onSyncSupabase().finally(() => setSyncingSupabase(false));
+              }}
+              className="inline-flex h-11 items-center gap-2 rounded-xl border border-chip-line bg-white px-4 text-sm font-semibold text-ink transition-colors hover:bg-sand-2 disabled:opacity-60"
+            >
+              <RefreshCw className={`size-4 text-cantera ${syncingSupabase ? 'animate-spin' : ''}`} />
+              {syncingSupabase ? 'Sincronizando...' : 'Sincronizar Supabase'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowImportExcel(true)}
+            className="inline-flex h-11 items-center gap-2 rounded-xl border border-gold/45 bg-night px-4 text-sm font-semibold text-gold-light shadow-sm transition-colors hover:bg-cantera hover:text-white"
+          >
+            <FileSpreadsheet className="size-4 text-gold" />
+            Importar Excel
+          </button>
+        </div>
       </header>
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">

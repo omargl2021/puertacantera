@@ -1,10 +1,7 @@
 import type { ReactNode } from 'react';
 import {
-  Cloud,
-  CloudCheck,
   Flag,
   Home,
-  LogOut,
   Printer,
   Receipt,
   Settings2,
@@ -18,10 +15,8 @@ import { BrandMark } from './BrandMark';
 interface ResidentShellProps {
   currentRoute: AppRoute;
   user: PortalUser;
-  cloudConnected: boolean;
-  onConnectCloud: () => void;
   onNavigate: (route: AppRoute) => void;
-  onLogout: () => void;
+  onLogout?: () => void;
   children: ReactNode;
 }
 
@@ -34,9 +29,7 @@ const MOBILE_NAV_ITEMS: Array<{ route: AppRoute; label: string; icon: typeof Hom
 
 const DESKTOP_NAV_ITEMS: Array<{ route: AppRoute; label: string; icon: typeof Home }> = [
   { route: '/', label: 'Inicio', icon: Home },
-  { route: '/pagos', label: 'Pagos', icon: Receipt },
   { route: '/visitas', label: 'Visitas', icon: UserPlus },
-  { route: '/reportes', label: 'Reportes', icon: Flag },
   { route: '/corbatines', label: 'Imprimir corbatín', icon: Printer },
   { route: '/cuenta', label: 'Mi cuenta', icon: UserCircle2 },
 ];
@@ -44,10 +37,7 @@ const DESKTOP_NAV_ITEMS: Array<{ route: AppRoute; label: string; icon: typeof Ho
 export function ResidentShell({
   currentRoute,
   user,
-  cloudConnected,
-  onConnectCloud,
   onNavigate,
-  onLogout,
   children,
 }: ResidentShellProps) {
   const isAdmin = isAdminUser(user);
@@ -94,38 +84,6 @@ export function ResidentShell({
               </button>
             )}
           </nav>
-        </div>
-
-        <div className="flex flex-col gap-2 border-t border-gold/15 pt-4">
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={onConnectCloud}
-              className={`flex min-h-10 w-full items-center gap-2.5 rounded-xl border px-3 text-left text-xs font-semibold transition-colors ${
-                cloudConnected
-                  ? 'border-ok/40 bg-ok/15 text-emerald-200'
-                  : 'border-gold/35 bg-white/[0.04] text-gold-light hover:bg-gold/15'
-              }`}
-            >
-              {cloudConnected ? (
-                <CloudCheck className="size-4 shrink-0 text-emerald-300" />
-              ) : (
-                <Cloud className="size-4 shrink-0 text-gold" />
-              )}
-              <span className="truncate">
-                {cloudConnected ? 'Nube Firebase activa' : 'Sincronizar nube Firebase'}
-              </span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={onLogout}
-            className="flex min-h-10 w-full items-center gap-2.5 rounded-xl border border-night-line px-3 text-left text-sm font-medium text-night-muted transition-colors hover:border-gold/35 hover:bg-white/[0.05] hover:text-gold-light"
-          >
-            <LogOut className="size-4 text-gold" />
-            <span>Cerrar sesión</span>
-          </button>
         </div>
       </aside>
 

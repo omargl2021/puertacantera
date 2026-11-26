@@ -1,14 +1,14 @@
 import { useState, type FormEvent } from 'react';
-import { Eye, EyeOff, Lock, ShieldCheck, UserRound } from 'lucide-react';
+import { Eye, EyeOff, Lock, UserRound } from 'lucide-react';
 import { validateLoginInput } from '../utils/portalLogic';
 import { BrandMark } from './BrandMark';
 
 interface AuthViewProps {
   onLogin: (username: string, password: string) => Promise<string | null>;
-  onOpenPrivacy: () => void;
+  onOpenPrivacy?: () => void;
 }
 
-export function AuthView({ onLogin, onOpenPrivacy }: AuthViewProps) {
+export function AuthView({ onLogin }: AuthViewProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -39,36 +39,12 @@ export function AuthView({ onLogin, onOpenPrivacy }: AuthViewProps) {
       {/* Brand hero panel — top banner on smartphone/tablet, full-height left column on desktop */}
       <aside className="flex flex-col items-center justify-center gap-4 px-6 pt-[max(env(safe-area-inset-top),2.75rem)] pb-14 lg:col-span-6 lg:border-r lg:border-gold/20 lg:px-12 lg:py-12 xl:col-span-7">
         <BrandMark variant="light" width={190} />
-        <div className="flex items-center gap-3">
-          <span aria-hidden="true" className="h-px w-10 bg-gold/45" />
-          <p className="text-xs font-semibold tracking-[0.22em] text-gold-light/90 uppercase">
-            Portal vecinal
-          </p>
-          <span aria-hidden="true" className="h-px w-10 bg-gold/45" />
-        </div>
-        <p className="hidden max-w-md text-center text-sm leading-relaxed text-night-muted lg:block">
-          Administración integral de Puerta Cantera Residencial: padrón de residentes, accesos QR,
-          corbatines vehiculares, cuotas, avisos y reportes en tiempo real.
-        </p>
       </aside>
 
       {/* Sign-in panel — edge-to-edge full height on every device */}
       <main className="-mt-8 flex flex-1 flex-col justify-center rounded-t-[28px] border-t border-gold/30 bg-sand px-6 pt-9 pb-[max(env(safe-area-inset-bottom),2rem)] md:px-12 lg:col-span-6 lg:mt-0 lg:rounded-none lg:border-t-0 lg:px-14 xl:col-span-5">
         <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-between gap-8 lg:flex-none">
           <div className="flex flex-col gap-6">
-            <div className="space-y-1.5">
-              <div className="inline-flex items-center gap-1.5 text-xs font-semibold tracking-[0.14em] text-cantera uppercase">
-                <ShieldCheck className="size-4 text-gold" />
-                Acceso seguro
-              </div>
-              <h1 className="font-heading text-3xl font-semibold text-ink sm:text-4xl">
-                Bienvenido
-              </h1>
-              <p className="text-[15px] text-stone">
-                Ingresa tu usuario y contraseña para entrar al portal de Puerta Cantera.
-              </p>
-            </div>
-
             <form className="flex flex-col gap-4" noValidate onSubmit={handleLoginSubmit}>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="login-username" className="text-sm font-semibold text-ink">
@@ -145,16 +121,6 @@ export function AuthView({ onLogin, onOpenPrivacy }: AuthViewProps) {
                 {submitting ? 'Verificando...' : 'Entrar'}
               </button>
             </form>
-          </div>
-
-          <div className="pt-4 text-center">
-            <button
-              type="button"
-              onClick={onOpenPrivacy}
-              className="text-sm text-stone underline-offset-4 hover:text-cantera hover:underline"
-            >
-              Aviso de privacidad
-            </button>
           </div>
         </div>
       </main>

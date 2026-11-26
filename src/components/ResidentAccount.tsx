@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, BellOff, Car, ChevronLeft, Download, LogOut, QrCode, Shield } from 'lucide-react';
+import { Car, ChevronLeft, LogOut, QrCode } from 'lucide-react';
 import type { AppRoute, PortalDatabase, PortalUser, ScannedResidentData } from '../types/portal';
 import {
   buildVehicleScanUrl,
@@ -15,8 +15,8 @@ interface ResidentAccountProps {
   db: PortalDatabase;
   user: PortalUser;
   onNavigate: (route: AppRoute) => void;
-  onTogglePush: () => void;
-  onInstallApp: () => void;
+  onTogglePush?: () => void;
+  onInstallApp?: () => void;
   onScanQr: (data: ScannedResidentData) => void;
   onNotify: (message: string) => void;
   onLogout: () => void;
@@ -26,8 +26,6 @@ export function ResidentAccount({
   db,
   user,
   onNavigate,
-  onTogglePush,
-  onInstallApp,
   onScanQr,
   onNotify,
   onLogout,
@@ -115,57 +113,6 @@ export function ResidentAccount({
             </button>
           )}
         </section>
-
-        <section className="flex flex-col gap-4 rounded-[18px] border border-line bg-white p-[18px]">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-cantera-soft text-cantera">
-                  {db.pushEnabled ? <Bell className="size-5" /> : <BellOff className="size-5" />}
-                </span>
-                <div className="flex flex-col">
-                  <span className="font-semibold text-ink">Notificaciones</span>
-                  <span className="text-sm text-stone">Avisos, pagos y reportes</span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={db.pushEnabled}
-                aria-label="Activar o desactivar notificaciones"
-                onClick={onTogglePush}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
-                  db.pushEnabled ? 'bg-cantera' : 'bg-chip-line'
-                }`}
-              >
-                <span
-                  className={`inline-block size-5 rounded-full bg-white shadow-sm transition-transform ${
-                    db.pushEnabled ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onInstallApp}
-            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-chip-line bg-white px-4 text-base font-semibold text-ink transition-colors hover:bg-sand-2 active:translate-y-px"
-          >
-            <Download className="size-4" />
-            Instalar la app
-          </button>
-        </section>
-
-        <button
-          type="button"
-          onClick={() => onNavigate('/privacidad')}
-          className="flex items-center gap-3 rounded-[14px] border border-line bg-white px-4 py-3.5 text-left font-semibold text-ink transition-colors hover:bg-sand-2/60"
-        >
-          <Shield className="size-5 text-cantera" />
-          <span>Aviso de privacidad</span>
-        </button>
 
         <button
           type="button"
