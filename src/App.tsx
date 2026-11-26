@@ -28,13 +28,16 @@ import {
 import { ResidentQrScanModal } from './components/ResidentQrScanModal';
 import { ResidentShell } from './components/ResidentShell';
 import { SEED_DATABASE } from './data/seedData';
-import { firebaseAuth } from './firebase';
+import { FIREBASE_BOOTSTRAP_ADMIN_EMAIL, firebaseAuth } from './firebase';
 import {
+  completePendingGoogleRedirect,
+  formatFirebaseSyncErrorEs,
   isFirebaseBootstrapAdmin,
-  seedFirestoreIfEmpty,
   signInWithGoogleCloud,
+  signOutGoogleCloud,
   subscribeToFirestoreDatabase,
   syncDatabaseChangesToFirestore,
+  syncLocalRecordsToFirestore,
 } from './services/firestoreSync';
 import type { AppRoute, PortalDatabase, PortalUser, ScannedResidentData } from './types/portal';
 import {
@@ -140,10 +143,10 @@ export default function App() {
     dbRef.current = db;
   }, [db]);
 
-  const showToast = (message: string) => {
+  const showToast = (message: string, durationMs = 4500) => {
     setToast(message);
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 3200);
+    toastTimer.current = window.setTimeout(() => setToast(null), durationMs);
   };
 
   const handleCloseScannedResident = () => {
@@ -165,7 +168,11 @@ export default function App() {
 
   // Listen for Firebase Auth state & activate real-time Firestore cloud database listeners
   useEffect(() => {
+    let active = true;
     let unsubFirestore: (() => void) | null = null;
+
+    void completePendingGoogleRedirect();
+
     const unsubAuth = onAuthStateChanged(firebaseAuth, (fbUser) => {
       if (unsubFirestore) {
         unsubFirestore();
@@ -173,23 +180,28 @@ export default function App() {
       }
       setFirebaseUser(fbUser);
 
-      if (fbUser && fbUser.emailVerified) {
-        if (isFirebaseBootstrapAdmin(fbUser)) {
-          void seedFirestoreIfEmpty(dbRef.current, fbUser).catch(() => {
-            // Structured error already logged via handleFirestoreError
+      if (fbUser && isFirebaseBootstrapAdmin(fbUser)) {
+        // Upload any local records missing in Firestore BEFORE attaching snapshot listeners
+        // so offline/Excel-imported residents are synced to cloud instead of overwritten.
+        void syncLocalRecordsToFirestore(dbRef.current, fbUser)
+          .catch((error) => {
+            if (active) showToast(formatFirebaseSyncErrorEs(error), 7000);
+          })
+          .finally(() => {
+            if (!active || firebaseAuth.currentUser?.uid !== fbUser.uid) return;
+            unsubFirestore = subscribeToFirestoreDatabase(
+              fbUser,
+              (patch) => {
+                setDb((prev) => normalizePortalDatabase({ ...prev, ...patch }));
+              },
+              (msg) => showToast(msg, 7000),
+            );
           });
-        }
-        unsubFirestore = subscribeToFirestoreDatabase(
-          fbUser,
-          (patch) => {
-            setDb((prev) => normalizePortalDatabase({ ...prev, ...patch }));
-          },
-          (msg) => showToast(msg),
-        );
       }
     });
 
     return () => {
+      active = false;
       if (unsubFirestore) unsubFirestore();
       unsubAuth();
     };
@@ -204,13 +216,15 @@ export default function App() {
     ? db.users.find((u) => u.id === currentUserId) ?? null
     : null;
 
+  const cloudReady = Boolean(firebaseUser && isFirebaseBootstrapAdmin(firebaseUser));
+
   const commitDbChange = (nextDb: PortalDatabase) => {
     const prevDb = dbRef.current;
     dbRef.current = nextDb;
     setDb(nextDb);
-    if (firebaseUser) {
-      void syncDatabaseChangesToFirestore(prevDb, nextDb, firebaseUser).catch(() => {
-        showToast('Cambio guardado localmente. Revisa la conexión con Firebase.');
+    if (firebaseUser && isFirebaseBootstrapAdmin(firebaseUser)) {
+      void syncDatabaseChangesToFirestore(prevDb, nextDb, firebaseUser).catch((error) => {
+        showToast(`Guardado localmente. ${formatFirebaseSyncErrorEs(error)}`, 7000);
       });
     }
   };
@@ -230,21 +244,37 @@ export default function App() {
       showToast('Solo el administrador puede sincronizar la base de datos en la nube.');
       return;
     }
-    if (firebaseUser) {
+    if (firebaseUser && isFirebaseBootstrapAdmin(firebaseUser)) {
       try {
-        await seedFirestoreIfEmpty(dbRef.current, firebaseUser);
-        showToast('Base de datos Firebase Firestore sincronizada.');
-      } catch {
-        showToast('Error al sincronizar con Firebase Firestore.');
+        const summary = await syncLocalRecordsToFirestore(dbRef.current, firebaseUser);
+        showToast(
+          summary.uploadedCount > 0
+            ? `Sincronizado con Firebase (${summary.uploadedCount} registros subidos · ${summary.cloudResidentsCount} residentes en nube).`
+            : `Firebase Firestore al día (${summary.cloudResidentsCount} residentes en nube).`,
+        );
+      } catch (error) {
+        showToast(formatFirebaseSyncErrorEs(error), 7000);
       }
       return;
     }
     try {
       const fbUser = await signInWithGoogleCloud();
-      await seedFirestoreIfEmpty(dbRef.current, fbUser);
-      showToast('Conectado a la base de datos en la nube Firebase.');
-    } catch {
-      showToast('No se completó la conexión con Firebase.');
+      if (!isFirebaseBootstrapAdmin(fbUser)) {
+        await signOutGoogleCloud().catch(() => {});
+        showToast(
+          `Usa la cuenta de Google autorizada (${FIREBASE_BOOTSTRAP_ADMIN_EMAIL}) para sincronizar Firebase.`,
+          7000,
+        );
+        return;
+      }
+      const summary = await syncLocalRecordsToFirestore(dbRef.current, fbUser);
+      showToast(
+        summary.uploadedCount > 0
+          ? `Conectado a Firebase (${summary.uploadedCount} registros subidos · ${summary.cloudResidentsCount} residentes en nube).`
+          : `Conectado a Firebase Firestore (${summary.cloudResidentsCount} residentes en nube).`,
+      );
+    } catch (error) {
+      showToast(formatFirebaseSyncErrorEs(error), 7000);
     }
   };
 
@@ -576,7 +606,7 @@ export default function App() {
       <ResidentShell
         currentRoute={effectiveResidentRoute}
         user={currentUser}
-        cloudConnected={Boolean(firebaseUser)}
+        cloudConnected={cloudReady}
         onConnectCloud={handleConnectCloud}
         onNavigate={navigate}
         onLogout={handleLogout}
@@ -585,7 +615,7 @@ export default function App() {
           <ResidentHome
             db={db}
             user={currentUser}
-            cloudConnected={Boolean(firebaseUser)}
+            cloudConnected={cloudReady}
             onConnectCloud={handleConnectCloud}
             onNavigate={navigate}
             onLogout={handleLogout}

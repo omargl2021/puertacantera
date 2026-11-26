@@ -2,6 +2,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -11,7 +12,13 @@ import {
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  getRedirectResult,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  type User,
+} from 'firebase/auth';
 import {
   FIREBASE_BOOTSTRAP_ADMIN_EMAIL,
   firebaseAuth,
@@ -41,6 +48,10 @@ function clip(value: string | undefined | null, maxLen: number): string {
   return (value ?? '').trim().slice(0, maxLen);
 }
 
+function ensureMinLen(value: string, minLen: number, fallback: string): string {
+  return value.length >= minLen ? value : fallback;
+}
+
 function toHouseDoc(house: House, ownerUid: string, isNew: boolean) {
   const payload: Record<string, unknown> = {
     id: sanitizeId(house.id),
@@ -64,9 +75,9 @@ function toResidentDoc(user: PortalUser, ownerUid: string, isNew: boolean) {
   const payload: Record<string, unknown> = {
     id: sanitizeId(user.id),
     residentKey: /^RES[0-9]+$/.test(user.residentKey) ? user.residentKey : 'RES001',
-    username: clip(user.username || user.email, 64) || 'usuario',
-    name: clip(user.name, 120) || 'Residente',
-    email: clip(user.email, 160) || 'sin-correo@puertacantera.com',
+    username: ensureMinLen(clip(user.username || user.email || user.residentKey, 64), 2, 'usuario'),
+    name: ensureMinLen(clip(user.name, 120), 2, 'Residente'),
+    email: ensureMinLen(clip(user.email, 160), 3, 'sin-correo@puertacantera.com'),
     role: user.role,
     active: Boolean(user.active),
     qrCode: clip(user.qrCode, 64),
@@ -91,7 +102,7 @@ function toResidentDoc(user: PortalUser, ownerUid: string, isNew: boolean) {
 function toPaymentDoc(payment: PaymentRecord, ownerUid: string, isNew: boolean) {
   const payload: Record<string, unknown> = {
     id: sanitizeId(payment.id),
-    folio: clip(payment.folio, 32) || 'P-0001',
+    folio: ensureMinLen(clip(payment.folio, 32), 2, 'P-0001'),
     houseId: sanitizeId(payment.houseId),
     userId: sanitizeId(payment.userId),
     ownerUid: clip(ownerUid, 128),
@@ -102,7 +113,7 @@ function toPaymentDoc(payment: PaymentRecord, ownerUid: string, isNew: boolean) 
     method: payment.method,
     reference: clip(payment.reference, 160),
     status: payment.status,
-    createdDate: clip(payment.createdAt, 20) || '2026-11-21',
+    createdDate: ensureMinLen(clip(payment.createdAt, 20), 8, '2026-11-21'),
     updatedAt: serverTimestamp(),
   };
   if (payment.approvedAmountMxn !== undefined) {
@@ -122,13 +133,13 @@ function toPaymentDoc(payment: PaymentRecord, ownerUid: string, isNew: boolean) 
 function toNoticeDoc(notice: CommunityNotice, isNew: boolean) {
   const payload: Record<string, unknown> = {
     id: sanitizeId(notice.id),
-    title: clip(notice.title, 160) || 'Aviso',
-    body: clip(notice.body, 3000) || 'Comunicado de administración.',
+    title: ensureMinLen(clip(notice.title, 160), 3, 'Aviso'),
+    body: ensureMinLen(clip(notice.body, 3000), 5, 'Comunicado de administración.'),
     category: notice.category,
     urgent: Boolean(notice.urgent),
     pinned: Boolean(notice.pinned),
     sendPush: Boolean(notice.sendPush),
-    createdDate: clip(notice.createdAt, 20) || '2026-11-21',
+    createdDate: ensureMinLen(clip(notice.createdAt, 20), 8, '2026-11-21'),
     authorName: clip(notice.authorName, 120) || 'ADMON',
     visibility: 'community',
     updatedAt: serverTimestamp(),
@@ -140,15 +151,15 @@ function toNoticeDoc(notice: CommunityNotice, isNew: boolean) {
 function toReportDoc(report: CommunityReport, ownerUid: string, isNew: boolean) {
   const payload: Record<string, unknown> = {
     id: sanitizeId(report.id),
-    folio: clip(report.folio, 32) || '#R-0001',
-    title: clip(report.title, 160) || 'Reporte vecinal',
+    folio: ensureMinLen(clip(report.folio, 32), 2, '#R-0001'),
+    title: ensureMinLen(clip(report.title, 160), 4, 'Reporte vecinal'),
     category: report.category,
-    description: clip(report.description, 2000) || 'Detalle del reporte.',
+    description: ensureMinLen(clip(report.description, 2000), 6, 'Detalle del reporte.'),
     houseId: sanitizeId(report.houseId),
     ownerUid: clip(ownerUid, 128),
     authorName: clip(report.authorName, 120) || 'Residente',
     status: report.status,
-    createdDate: clip(report.createdAt, 20) || '2026-11-21',
+    createdDate: ensureMinLen(clip(report.createdAt, 20), 8, '2026-11-21'),
     comments: (report.comments ?? []).slice(0, 50),
     updatedAt: serverTimestamp(),
   };
@@ -160,17 +171,17 @@ function toReportDoc(report: CommunityReport, ownerUid: string, isNew: boolean) 
 function toVisitDoc(pass: VisitPass, ownerUid: string, isNew: boolean) {
   const payload: Record<string, unknown> = {
     id: sanitizeId(pass.id),
-    code: clip(pass.code, 32) || 'PC-000000',
+    code: ensureMinLen(clip(pass.code, 32), 4, 'PC-000000'),
     houseId: sanitizeId(pass.houseId),
     ownerUid: clip(ownerUid, 128),
     createdByName: clip(pass.createdByName, 120) || 'Residente',
-    visitorName: clip(pass.visitorName, 120) || 'Visitante',
+    visitorName: ensureMinLen(clip(pass.visitorName, 120), 2, 'Visitante'),
     companions: Math.max(0, Math.min(20, Math.round(pass.companions || 0))),
     accessType: pass.accessType,
-    validFrom: clip(pass.validFrom, 20) || '2026-11-21',
-    validUntil: clip(pass.validUntil, 20) || '2026-11-21',
+    validFrom: ensureMinLen(clip(pass.validFrom, 20), 8, '2026-11-21'),
+    validUntil: ensureMinLen(clip(pass.validUntil, 20), 8, '2026-11-21'),
     status: pass.status,
-    createdDate: clip(pass.createdAt, 20) || '2026-11-21',
+    createdDate: ensureMinLen(clip(pass.createdAt, 20), 8, '2026-11-21'),
     entries: (pass.entries ?? []).slice(0, 50),
     updatedAt: serverTimestamp(),
   };
@@ -189,9 +200,9 @@ function toFeeDoc(fee: FeeScheduleVersion, isNew: boolean) {
     semiannualMxn: Math.max(1, Math.min(500000, Math.round(fee.semiannualMxn))),
     annualMxn: Math.max(1, Math.min(1000000, Math.round(fee.annualMxn))),
     dueDay: Math.max(1, Math.min(28, Math.round(fee.dueDay))),
-    billingStartMonth: clip(fee.billingStartMonth, 10) || '2026-11',
-    effectiveFrom: clip(fee.effectiveFrom, 20) || '2026-11-09',
-    createdDate: clip(fee.createdAt, 20) || '2026-11-09',
+    billingStartMonth: ensureMinLen(clip(fee.billingStartMonth, 10), 7, '2026-11'),
+    effectiveFrom: ensureMinLen(clip(fee.effectiveFrom, 20), 8, '2026-11-09'),
+    createdDate: ensureMinLen(clip(fee.createdAt, 20), 8, '2026-11-09'),
     createdBy: clip(fee.createdBy, 120) || 'ADMON',
     visibility: 'community',
     updatedAt: serverTimestamp(),
@@ -204,8 +215,8 @@ function toAuditDoc(entry: AuditLogEntry) {
   const payload: Record<string, unknown> = {
     id: sanitizeId(entry.id),
     actorName: clip(entry.actorName, 120) || 'ADMON',
-    action: clip(entry.action, 160) || 'Movimiento',
-    timestampLabel: clip(entry.timestampLabel, 64) || '—',
+    action: ensureMinLen(clip(entry.action, 160), 2, 'Movimiento'),
+    timestampLabel: ensureMinLen(clip(entry.timestampLabel, 64), 2, '—'),
     createdAt: serverTimestamp(),
   };
   if (entry.beforeSummary) payload.beforeSummary = clip(entry.beforeSummary, 600);
@@ -221,66 +232,237 @@ export function isFirebaseBootstrapAdmin(user: User | null): boolean {
   );
 }
 
+export function formatFirebaseSyncErrorEs(error: unknown): string {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : '';
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+
+  if (code === 'auth/unauthorized-domain' || msg.includes('auth/unauthorized-domain')) {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'este dominio';
+    return `Dominio no autorizado en Firebase (${host}). Agrégalo en Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
+  if (code === 'auth/popup-blocked' || msg.includes('auth/popup-blocked')) {
+    return 'El navegador bloqueó la ventana de Google. Permite ventanas emergentes e intenta de nuevo.';
+  }
+  if (
+    code === 'auth/popup-closed-by-user' ||
+    code === 'auth/cancelled-popup-request' ||
+    msg.includes('popup-closed-by-user')
+  ) {
+    return 'Se cerró la ventana de Google antes de completar la conexión.';
+  }
+  if (code === 'permission-denied' || msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
+    return `Permiso denegado en Firestore. Conéctate con la cuenta autorizada (${FIREBASE_BOOTSTRAP_ADMIN_EMAIL}).`;
+  }
+  if (code === 'unavailable' || msg.includes('offline')) {
+    return 'Sin conexión con Firebase Firestore. Verifica tu internet e intenta nuevamente.';
+  }
+  return 'No se pudo completar la sincronización con Firebase. Revisa tu conexión e intenta de nuevo.';
+}
+
+export async function completePendingGoogleRedirect(): Promise<User | null> {
+  try {
+    const result = await getRedirectResult(firebaseAuth);
+    return result?.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function signInWithGoogleCloud(): Promise<User> {
-  const result = await signInWithPopup(firebaseAuth, googleProvider);
-  return result.user;
+  try {
+    const result = await signInWithPopup(firebaseAuth, googleProvider);
+    return result.user;
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code ?? '')
+        : '';
+    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+      await signInWithRedirect(firebaseAuth, googleProvider);
+    }
+    throw error;
+  }
 }
 
 export async function signOutGoogleCloud(): Promise<void> {
   await signOut(firebaseAuth);
 }
 
-export async function seedFirestoreIfEmpty(
-  seedDb: PortalDatabase,
+interface PendingBatchOp {
+  colName: string;
+  docId: string;
+  payload: Record<string, unknown>;
+  merge?: boolean;
+}
+
+async function commitOpsInBatches(ops: PendingBatchOp[]): Promise<void> {
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+    const chunk = ops.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(firestoreDb);
+    for (const op of chunk) {
+      const ref = doc(firestoreDb, op.colName, op.docId);
+      if (op.merge) {
+        batch.set(ref, op.payload, { merge: true });
+      } else {
+        batch.set(ref, op.payload);
+      }
+    }
+    await batch.commit();
+  }
+}
+
+export interface CloudSyncSummary {
+  uploadedCount: number;
+  cloudResidentsCount: number;
+}
+
+let activeSyncPromise: Promise<CloudSyncSummary> | null = null;
+
+/**
+ * Ensures the admin doc exists and uploads any local records not yet present in Firestore
+ * (so residents added/imported before connecting to cloud are never lost or overwritten).
+ */
+export function syncLocalRecordsToFirestore(
+  localDb: PortalDatabase,
   firebaseUser: User,
-): Promise<boolean> {
-  if (!isFirebaseBootstrapAdmin(firebaseUser)) return false;
+): Promise<CloudSyncSummary> {
+  if (activeSyncPromise) return activeSyncPromise;
+  activeSyncPromise = runSyncLocalRecordsToFirestore(localDb, firebaseUser).finally(() => {
+    activeSyncPromise = null;
+  });
+  return activeSyncPromise;
+}
+
+async function runSyncLocalRecordsToFirestore(
+  localDb: PortalDatabase,
+  firebaseUser: User,
+): Promise<CloudSyncSummary> {
+  if (!isFirebaseBootstrapAdmin(firebaseUser)) {
+    throw new Error('permission-denied');
+  }
+
+  const uid = firebaseUser.uid;
+  const adminDocId = sanitizeId(uid);
 
   try {
-    const existingResidents = await getDocs(collection(firestoreDb, 'residents'));
-    if (!existingResidents.empty) {
-      return false;
+    const [
+      adminSnap,
+      housesSnap,
+      residentsSnap,
+      feesSnap,
+      noticesSnap,
+      reportsSnap,
+      visitsSnap,
+      paymentsSnap,
+      auditSnap,
+    ] = await Promise.all([
+      getDoc(doc(firestoreDb, 'admins', adminDocId)),
+      getDocs(collection(firestoreDb, 'houses')),
+      getDocs(collection(firestoreDb, 'residents')),
+      getDocs(collection(firestoreDb, 'feeHistory')),
+      getDocs(collection(firestoreDb, 'notices')),
+      getDocs(collection(firestoreDb, 'reports')),
+      getDocs(collection(firestoreDb, 'visits')),
+      getDocs(collection(firestoreDb, 'payments')),
+      getDocs(collection(firestoreDb, 'auditLogs')),
+    ]);
+
+    const existingHouseIds = new Set(housesSnap.docs.map((d) => d.id));
+    const existingResidentIds = new Set(residentsSnap.docs.map((d) => d.id));
+    const existingFeeIds = new Set(feesSnap.docs.map((d) => d.id));
+    const existingNoticeIds = new Set(noticesSnap.docs.map((d) => d.id));
+    const existingReportIds = new Set(reportsSnap.docs.map((d) => d.id));
+    const existingVisitIds = new Set(visitsSnap.docs.map((d) => d.id));
+    const existingPaymentIds = new Set(paymentsSnap.docs.map((d) => d.id));
+    const existingAuditIds = new Set(auditSnap.docs.map((d) => d.id));
+
+    const ops: PendingBatchOp[] = [];
+
+    if (!adminSnap.exists()) {
+      ops.push({
+        colName: 'admins',
+        docId: adminDocId,
+        payload: {
+          uid: adminDocId,
+          email: clip(firebaseUser.email, 160),
+          username: 'ADMON',
+          active: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+      });
     }
 
-    const batch = writeBatch(firestoreDb);
-    const uid = firebaseUser.uid;
-
-    batch.set(doc(firestoreDb, 'admins', sanitizeId(uid)), {
-      uid: sanitizeId(uid),
-      email: clip(firebaseUser.email, 160),
-      username: 'ADMON',
-      active: true,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    for (const h of seedDb.houses) {
-      batch.set(doc(firestoreDb, 'houses', sanitizeId(h.id)), toHouseDoc(h, uid, true));
-    }
-    for (const u of seedDb.users) {
-      batch.set(doc(firestoreDb, 'residents', sanitizeId(u.id)), toResidentDoc(u, uid, true));
-    }
-    for (const f of seedDb.feeHistory) {
-      batch.set(doc(firestoreDb, 'feeHistory', sanitizeId(f.id)), toFeeDoc(f, true));
-    }
-    for (const n of seedDb.notices) {
-      batch.set(doc(firestoreDb, 'notices', sanitizeId(n.id)), toNoticeDoc(n, true));
-    }
-    for (const r of seedDb.reports) {
-      batch.set(doc(firestoreDb, 'reports', sanitizeId(r.id)), toReportDoc(r, uid, true));
-    }
-    for (const v of seedDb.passes) {
-      batch.set(doc(firestoreDb, 'visits', sanitizeId(v.id)), toVisitDoc(v, uid, true));
-    }
-    for (const p of seedDb.payments) {
-      batch.set(doc(firestoreDb, 'payments', sanitizeId(p.id)), toPaymentDoc(p, uid, true));
-    }
-    for (const log of seedDb.auditLog.slice(0, 20)) {
-      batch.set(doc(firestoreDb, 'auditLogs', sanitizeId(log.id)), toAuditDoc(log));
+    for (const h of localDb.houses) {
+      const docId = sanitizeId(h.id);
+      if (!existingHouseIds.has(docId)) {
+        ops.push({ colName: 'houses', docId, payload: toHouseDoc(h, uid, true) });
+      }
     }
 
-    await batch.commit();
-    return true;
+    let uploadedResidents = 0;
+    for (const u of localDb.users) {
+      const docId = sanitizeId(u.id);
+      if (!existingResidentIds.has(docId)) {
+        ops.push({ colName: 'residents', docId, payload: toResidentDoc(u, uid, true) });
+        uploadedResidents += 1;
+      }
+    }
+
+    for (const f of localDb.feeHistory) {
+      const docId = sanitizeId(f.id);
+      if (!existingFeeIds.has(docId)) {
+        ops.push({ colName: 'feeHistory', docId, payload: toFeeDoc(f, true) });
+      }
+    }
+
+    for (const n of localDb.notices) {
+      const docId = sanitizeId(n.id);
+      if (!existingNoticeIds.has(docId)) {
+        ops.push({ colName: 'notices', docId, payload: toNoticeDoc(n, true) });
+      }
+    }
+
+    for (const r of localDb.reports) {
+      const docId = sanitizeId(r.id);
+      if (!existingReportIds.has(docId)) {
+        ops.push({ colName: 'reports', docId, payload: toReportDoc(r, uid, true) });
+      }
+    }
+
+    for (const v of localDb.passes) {
+      const docId = sanitizeId(v.id);
+      if (!existingVisitIds.has(docId)) {
+        ops.push({ colName: 'visits', docId, payload: toVisitDoc(v, uid, true) });
+      }
+    }
+
+    for (const p of localDb.payments) {
+      const docId = sanitizeId(p.id);
+      if (!existingPaymentIds.has(docId)) {
+        ops.push({ colName: 'payments', docId, payload: toPaymentDoc(p, uid, true) });
+      }
+    }
+
+    for (const log of localDb.auditLog.slice(0, 30)) {
+      const docId = sanitizeId(log.id);
+      if (!existingAuditIds.has(docId)) {
+        ops.push({ colName: 'auditLogs', docId, payload: toAuditDoc(log) });
+      }
+    }
+
+    if (ops.length > 0) {
+      await commitOpsInBatches(ops);
+    }
+
+    return {
+      uploadedCount: ops.length,
+      cloudResidentsCount: existingResidentIds.size + uploadedResidents,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'residents');
   }
@@ -295,7 +477,10 @@ export async function syncDatabaseChangesToFirestore(
   const uid = firebaseUser.uid;
   const adminAccess = isFirebaseBootstrapAdmin(firebaseUser);
 
-  const syncCollection = async <T extends { id: string }>(
+  const ops: PendingBatchOp[] = [];
+  const deletes: Array<{ colName: string; docId: string }> = [];
+
+  const collectCollectionDiff = async <T extends { id: string }>(
     colName: string,
     prevItems: T[],
     nextItems: T[],
@@ -310,16 +495,15 @@ export async function syncDatabaseChangesToFirestore(
       const prevItem = prevMap.get(item.id);
       const docId = sanitizeId(item.id);
       if (!prevItem) {
-        try {
-          await setDoc(doc(firestoreDb, colName, docId), serializer(item, true));
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, `${colName}/${docId}`);
-        }
+        ops.push({ colName, docId, payload: serializer(item, true), merge: false });
       } else if (allowUpdate && JSON.stringify(prevItem) !== JSON.stringify(item)) {
-        try {
-          await setDoc(doc(firestoreDb, colName, docId), serializer(item, false), { merge: true });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `${colName}/${docId}`);
+        // Verify whether doc already exists in Firestore so updates to locally-created docs
+        // include createdAt when they are being written to Firestore for the first time.
+        const snap = await getDoc(doc(firestoreDb, colName, docId));
+        if (snap.exists()) {
+          ops.push({ colName, docId, payload: serializer(item, false), merge: true });
+        } else {
+          ops.push({ colName, docId, payload: serializer(item, true), merge: false });
         }
       }
     }
@@ -327,49 +511,60 @@ export async function syncDatabaseChangesToFirestore(
     if (allowDelete) {
       for (const prevItem of prevItems) {
         if (!nextMap.has(prevItem.id)) {
-          const docId = sanitizeId(prevItem.id);
-          try {
-            await deleteDoc(doc(firestoreDb, colName, docId));
-          } catch (error) {
-            handleFirestoreError(error, OperationType.DELETE, `${colName}/${docId}`);
-          }
+          deletes.push({ colName, docId: sanitizeId(prevItem.id) });
         }
       }
     }
   };
 
-  if (adminAccess) {
-    await syncCollection('houses', prevDb.houses, nextDb.houses, (h, isNew) =>
-      toHouseDoc(h, uid, isNew),
-    );
-    await syncCollection('residents', prevDb.users, nextDb.users, (u, isNew) =>
-      toResidentDoc(u, uid, isNew),
-    );
-    await syncCollection('notices', prevDb.notices, nextDb.notices, (n, isNew) =>
-      toNoticeDoc(n, isNew),
-    );
-    await syncCollection('feeHistory', prevDb.feeHistory, nextDb.feeHistory, (f, isNew) =>
-      toFeeDoc(f, isNew),
-    );
-    await syncCollection(
-      'auditLogs',
-      prevDb.auditLog,
-      nextDb.auditLog.slice(0, 50),
-      (a) => toAuditDoc(a),
-      false,
-      false,
-    );
-  }
+  try {
+    if (adminAccess) {
+      await collectCollectionDiff('houses', prevDb.houses, nextDb.houses, (h, isNew) =>
+        toHouseDoc(h, uid, isNew),
+      );
+      await collectCollectionDiff('residents', prevDb.users, nextDb.users, (u, isNew) =>
+        toResidentDoc(u, uid, isNew),
+      );
+      await collectCollectionDiff('notices', prevDb.notices, nextDb.notices, (n, isNew) =>
+        toNoticeDoc(n, isNew),
+      );
+      await collectCollectionDiff('feeHistory', prevDb.feeHistory, nextDb.feeHistory, (f, isNew) =>
+        toFeeDoc(f, isNew),
+      );
+      await collectCollectionDiff(
+        'auditLogs',
+        prevDb.auditLog,
+        nextDb.auditLog.slice(0, 50),
+        (a) => toAuditDoc(a),
+        false,
+        false,
+      );
+    }
 
-  await syncCollection('payments', prevDb.payments, nextDb.payments, (p, isNew) =>
-    toPaymentDoc(p, uid, isNew),
-  );
-  await syncCollection('reports', prevDb.reports, nextDb.reports, (r, isNew) =>
-    toReportDoc(r, uid, isNew),
-  );
-  await syncCollection('visits', prevDb.passes, nextDb.passes, (v, isNew) =>
-    toVisitDoc(v, uid, isNew),
-  );
+    await collectCollectionDiff('payments', prevDb.payments, nextDb.payments, (p, isNew) =>
+      toPaymentDoc(p, uid, isNew),
+    );
+    await collectCollectionDiff('reports', prevDb.reports, nextDb.reports, (r, isNew) =>
+      toReportDoc(r, uid, isNew),
+    );
+    await collectCollectionDiff('visits', prevDb.passes, nextDb.passes, (v, isNew) =>
+      toVisitDoc(v, uid, isNew),
+    );
+
+    if (ops.length > 0) {
+      await commitOpsInBatches(ops);
+    }
+
+    for (const del of deletes) {
+      try {
+        await deleteDoc(doc(firestoreDb, del.colName, del.docId));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `${del.colName}/${del.docId}`);
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'sync');
+  }
 }
 
 export function subscribeToFirestoreDatabase(
@@ -386,16 +581,17 @@ export function subscribeToFirestoreDatabase(
     q: ReturnType<typeof query> | ReturnType<typeof collection>,
     mapper: (data: Record<string, unknown>) => T,
     apply: (items: T[]) => void,
+    ignoreEmpty = false,
   ) => {
     const unsub = onSnapshot(
       q,
       (snap) => {
-        if (snap.empty) return;
+        if (ignoreEmpty && snap.empty) return;
         const items = snap.docs.map((d) => mapper(d.data() as Record<string, unknown>));
         apply(items);
       },
       (error) => {
-        onSyncError(`Error de sincronización en ${colName}`);
+        onSyncError(`Error de sincronización en ${colName}: ${formatFirebaseSyncErrorEs(error)}`);
         handleFirestoreError(error, OperationType.LIST, colName);
       },
     );
@@ -416,6 +612,7 @@ export function subscribeToFirestoreDatabase(
       active: Boolean(d.active ?? true),
     }),
     (houses) => onPatch({ houses }),
+    true,
   );
 
   listen(
@@ -428,7 +625,7 @@ export function subscribeToFirestoreDatabase(
       residentKey: String(d.residentKey ?? 'RES001'),
       username: String(d.username ?? d.email ?? ''),
       name: String(d.name ?? ''),
-      email: String(d.email ?? ''),
+      email: String(d.email ?? '') === 'sin-correo@puertacantera.com' ? '' : String(d.email ?? ''),
       phone: d.phone ? String(d.phone) : undefined,
       role: (d.role as PortalUser['role']) ?? 'resident',
       houseId: d.houseId ? String(d.houseId) : null,
@@ -440,6 +637,7 @@ export function subscribeToFirestoreDatabase(
         : [],
     }),
     (users) => onPatch({ users }),
+    true,
   );
 
   listen(
@@ -478,6 +676,7 @@ export function subscribeToFirestoreDatabase(
       createdBy: String(d.createdBy ?? 'ADMON'),
     }),
     (feeHistory) => onPatch({ feeHistory }),
+    true,
   );
 
   listen(
@@ -570,6 +769,7 @@ export function subscribeToFirestoreDatabase(
         afterSummary: d.afterSummary ? String(d.afterSummary) : undefined,
       }),
       (auditLog) => onPatch({ auditLog }),
+      true,
     );
   }
 
